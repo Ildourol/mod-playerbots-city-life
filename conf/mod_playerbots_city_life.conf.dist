@@ -1,0 +1,161 @@
+###################################################################################################
+# City Life Module
+###################################################################################################
+
+[worldserver]
+
+# Enable or disable the module.
+CityLife.Enable = 1
+
+# Log detailed debug information regarding bot allocation and movements.
+CityLife.Debug = 0
+
+# Wait for random bots to connect before assigning city residents (in seconds).
+CityLife.StartupDelaySeconds = 90
+
+# Population and behavior management interval (in seconds). Lower values respond faster but increase CPU usage.
+CityLife.TickSeconds = 10
+
+###################################################################################################
+# Bot Selection and Safety Settings
+###################################################################################################
+
+# Read random bot account prefix and login delay settings from mod-playerbots.
+CityLife.Bots.UsePlayerbotConfig = 1
+
+# "auto" uses the value of AiPlayerbot.RandomBotAccountPrefix.
+CityLife.Bots.AccountPrefix = "auto"
+
+# Optionally restrict the account ID range. If both values are 0, no restriction is applied.
+CityLife.Bots.AccountMin = 0
+CityLife.Bots.AccountMax = 0
+
+CityLife.Bots.QueryLimit = 500
+
+CityLife.Bots.SkipGrouped = 1
+
+# Keep disabled in standard random bot environments. If enabled, most bots may be excluded due to BotActiveAlone conditions.
+CityLife.Bots.RespectPlayerbotActivity = 0
+
+# Return bots to their original locations when released from city resident assignment.
+CityLife.Bots.ReturnWhenReleased = 1
+
+###################################################################################################
+# Population Allocation Management
+###################################################################################################
+
+# Overall total population safety cap after applying hub settings and time-of-day multipliers.
+# If reached, higher-priority hubs defined in city_life_hub are populated first.
+CityLife.Population.MaxTotal = 300
+
+# Gradually assign and release bots per tick to reduce large-scale teleport bursts and CPU spikes.
+CityLife.Population.MaxChangesPerTick = 3
+
+###################################################################################################
+# Time-of-Day Population Multipliers (Based on local system time of the worldserver)
+###################################################################################################
+
+CityLife.Time.Enable = 1
+
+# Morning 06:00~11:59, Day 12:00~17:59, Evening 18:00~23:59, Night 00:00~05:59.
+# 100 deploys the full configured population for the hub.
+CityLife.Time.MorningMultiplierPct = 60
+CityLife.Time.DayMultiplierPct = 80
+CityLife.Time.EveningMultiplierPct = 100
+CityLife.Time.NightMultiplierPct = 25
+
+###################################################################################################
+# City Behavior
+###################################################################################################
+
+# Resident bots occasionally move between auction houses, banks, mailboxes, flight masters, and public squares.
+CityLife.Behaviour.Relocate = 1
+CityLife.Behaviour.RelocateMinSeconds = 180
+CityLife.Behaviour.RelocateMaxSeconds = 600
+
+# Non-combat resident bots that stray further than this distance due to other AI actions are returned to their assigned spot.
+# This leash behavior does not interrupt ongoing combat.
+CityLife.Behaviour.LeashRadius = 35
+
+CityLife.Behaviour.Emotes = 1
+CityLife.Behaviour.EmoteChancePct = 35
+CityLife.Behaviour.EmoteMinSeconds = 120
+CityLife.Behaviour.EmoteMaxSeconds = 360
+
+# Assign more bots to auction houses and banks in designated hubs compared to other spots.
+# 250 corresponds to 2.5x the database base weight.
+CityLife.Behaviour.ServiceSpotWeightMultiplierPct = 250
+
+# Percentage of bots initially assigned to service spots that will remain stationary.
+# Stationary bots will still emote and defend themselves if attacked.
+CityLife.Behaviour.StaticServiceChancePct = 80
+CityLife.Behaviour.StaticServiceHubs = "Stormwind,Orgrimmar"
+CityLife.Behaviour.StaticServiceCategories = "auction,bank"
+
+# City bots defend themselves if attacked, but do not hunt, travel, or wander far away on their own.
+CityLife.Strategies.NonCombat = "+stay,-follow,-passive,-grind,-rpg,-travel,-duel,-pvp"
+
+###################################################################################################
+# Default Hub Populations
+###################################################################################################
+
+# Each hub in the database also supports the following individual config overrides:
+#   CityLife.Hub.<HubName>.Enable
+#   CityLife.Hub.<HubName>.Population
+#   CityLife.Hub.<HubName>.TimeScaling
+#   CityLife.Hub.<HubName>.ResidenceSeconds: Residence duration in seconds. 0 keeps residents indefinitely without rotation.
+# Custom user hubs will fallback to database defaults if corresponding config keys are not present.
+
+CityLife.Hub.Stormwind.Enable = 1
+CityLife.Hub.Stormwind.Population = 25
+
+CityLife.Hub.Orgrimmar.Enable = 1
+CityLife.Hub.Orgrimmar.Population = 25
+
+CityLife.Hub.Ironforge.Enable = 1
+CityLife.Hub.Ironforge.Population = 18
+
+CityLife.Hub.Undercity.Enable = 1
+CityLife.Hub.Undercity.Population = 18
+
+CityLife.Hub.Darnassus.Enable = 1
+CityLife.Hub.Darnassus.Population = 10
+
+CityLife.Hub.ThunderBluff.Enable = 1
+CityLife.Hub.ThunderBluff.Population = 10
+
+CityLife.Hub.Exodar.Enable = 1
+CityLife.Hub.Exodar.Population = 5
+
+CityLife.Hub.Silvermoon.Enable = 1
+CityLife.Hub.Silvermoon.Population = 8
+
+CityLife.Hub.Shattrath.Enable = 1
+CityLife.Hub.Shattrath.Population = 20
+
+CityLife.Hub.Dalaran.Enable = 1
+CityLife.Hub.Dalaran.Population = 25
+
+# Maintains 40 bots per faction in the Wintergrasp starting camps.
+# These ignore time-of-day multipliers and rotate every 3 hours.
+CityLife.Hub.WintergraspAlliance.Enable = 1
+CityLife.Hub.WintergraspAlliance.Population = 40
+CityLife.Hub.WintergraspAlliance.TimeScaling = 0
+CityLife.Hub.WintergraspAlliance.ResidenceSeconds = 10800
+
+CityLife.Hub.WintergraspHorde.Enable = 1
+CityLife.Hub.WintergraspHorde.Population = 40
+CityLife.Hub.WintergraspHorde.TimeScaling = 0
+CityLife.Hub.WintergraspHorde.ResidenceSeconds = 10800
+
+CityLife.Hub.Gadgetzan.Enable = 1
+CityLife.Hub.Gadgetzan.Population = 8
+
+CityLife.Hub.Goldshire.Enable = 1
+CityLife.Hub.Goldshire.Population = 8
+
+CityLife.Hub.HonorHold.Enable = 1
+CityLife.Hub.HonorHold.Population = 6
+
+CityLife.Hub.Thrallmar.Enable = 1
+CityLife.Hub.Thrallmar.Population = 6
