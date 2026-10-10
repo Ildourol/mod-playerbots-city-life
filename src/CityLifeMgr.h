@@ -62,7 +62,8 @@ namespace CityLife
         Player* FindPlayer(uint32 guidLow) const;
         bool IsConfiguredBotAccount(uint32 accountId);
         bool IsCandidate(Player* player);
-        bool IsResidentUsable(Player* player) const;
+        bool IsResidentUsable(Player* player, bool allowOwnedDuel = false) const;
+        uint32 GetLiveWorldBotCount() const;
         std::vector<BotCandidate> LoadCandidates(Hub const& hub);
 
         Hub* FindHub(uint32 hubId);
@@ -184,6 +185,7 @@ namespace CityLife
         uint32 _crowdChatCooldownSec = 90;
         uint32 _crowdAfkMinSec = 60;
         uint32 _crowdAfkMaxSec = 180;
+        bool _activitiesAfkEnable = true;
 
         // Duels Settings
         uint32 _duelCooldownSec = 45;

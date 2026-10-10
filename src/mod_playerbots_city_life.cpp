@@ -43,6 +43,9 @@ public:
     }
 };
 
+#include "Group.h"
+#include "GroupScript.h"
+
 class CityLifePlayerScript : public PlayerScript
 {
 public:
@@ -51,8 +54,6 @@ public:
             PLAYERHOOK_ON_LOGIN,
             PLAYERHOOK_ON_LOGOUT,
             PLAYERHOOK_ON_UPDATE_ZONE,
-            PLAYERHOOK_CAN_GROUP_INVITE,
-            PLAYERHOOK_CAN_GROUP_ACCEPT,
             PLAYERHOOK_CAN_INIT_TRADE,
             PLAYERHOOK_CAN_SET_TRADE_ITEM,
             PLAYERHOOK_ON_BEFORE_ACHI_COMPLETE,
@@ -74,29 +75,6 @@ public:
     void OnPlayerUpdateZone(Player* player, uint32 newZone, uint32 /*newArea*/) override
     {
         sCityLifeMgr.OnPlayerZoneUpdate(player, newZone);
-    }
-
-    bool OnPlayerCanGroupInvite(Player* /*player*/, std::string& membername) override
-    {
-        if (Player* invited = ObjectAccessor::FindPlayerByName(membername))
-        {
-            if (invited->GetSession() && invited->GetSession()->IsBot())
-            {
-                if (sCityLifeMgr.IsResident(invited->GetGUID().GetCounter()))
-                    sCityLifeMgr.DisengageResident(invited->GetGUID().GetCounter());
-            }
-        }
-        return true;
-    }
-
-    bool OnPlayerCanGroupAccept(Player* player, Group* /*group*/) override
-    {
-        if (player && player->GetSession() && player->GetSession()->IsBot())
-        {
-            if (sCityLifeMgr.IsResident(player->GetGUID().GetCounter()))
-                sCityLifeMgr.DisengageResident(player->GetGUID().GetCounter());
-        }
-        return true;
     }
 
     bool OnPlayerCanInitTrade(Player* player, Player* target) override
@@ -163,11 +141,43 @@ public:
     }
 };
 
+class CityLifeGroupScript : public GroupScript
+{
+public:
+    CityLifeGroupScript()
+        : GroupScript("CityLifeGroupScript", { GROUPSCRIPT_ON_ADD_MEMBER })
+    {
+    }
+
+    void OnAddMember(Group* group, ObjectGuid guid) override
+    {
+        if (!group)
+            return;
+
+        bool hasRealPlayer = false;
+        for (GroupReference const* ref = group->GetFirstMember(); ref != nullptr; ref = ref->next())
+        {
+            Player const* member = ref->GetSource();
+            if (member && member->GetSession() && !member->GetSession()->IsBot())
+            {
+                hasRealPlayer = true;
+                break;
+            }
+        }
+
+        if (hasRealPlayer && sCityLifeMgr.IsResident(guid.GetCounter()))
+        {
+            sCityLifeMgr.DisengageResident(guid.GetCounter());
+        }
+    }
+};
+
 void AddCityLifeScripts()
 {
     PlayerbotsLife::RegisterActiveModule(PlayerbotsLife::ModuleSystemFlags::MODULE_CITY_LIFE);
     new CityLifeWorldScript();
     new CityLifePlayerScript();
+    new CityLifeGroupScript();
     new CityLifeCommandScript();
     LOG_INFO("server.loading", ">> Loaded mod-playerbots-city-life");
 }

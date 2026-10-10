@@ -35,8 +35,9 @@ CityLife.Population.FixedCount = 100
 # Tuned conservatively to 10% (yielding ~100 bots on a 1,000-bot server) leaving 80%+ of bots in the world.
 CityLife.Population.BorrowPercent = 10
 
-# Hard global ceiling across all hubs combined.
-# Tuned conservatively to 120 max total bots across all hubs.
+# Global ceiling across all hubs combined.
+# Set to 0 for uncapped dynamic mode (budget scales purely with live world bots * BorrowPercent).
+# Tuned conservatively to 120 max total bots across all hubs on a 1,000-bot server.
 CityLife.Population.MaxTotal = 120
 
 # Demand Mode:
@@ -46,8 +47,9 @@ CityLife.Population.MaxTotal = 120
 CityLife.Population.DemandMode = "hybrid"
 
 # Hub distribution profile:
-# "scaled" - Distributes available budget proportionally based on hub configured populations.
-# "legacy" - Exact configured counts allocated in order of hub priority.
+# "scaled" - Proportional scaling: distributes dynamic budget proportionally across all active hubs
+#            based on relative hub importance (avoids ghost towns in smaller capitals/outposts).
+# "legacy" - Sequential allocation: fills hubs in configured order until budget is exhausted.
 CityLife.Population.Distribution = "scaled"
 
 # Minimum population baseline percentage retained in unattended hubs under "hybrid" mode.
@@ -170,6 +172,7 @@ CityLife.Activities.InnDancing.Enable = 1
 CityLife.Activities.PlazaSocial.Enable = 1
 CityLife.Activities.CrowdScenes.Enable = 1
 CityLife.Activities.MountedTravel.Enable = 1
+CityLife.Activities.AFK.Enable = 1
 
 ###################################################################################################
 # Living Crowd Scenes (Capital Bank & Auction House Squares)

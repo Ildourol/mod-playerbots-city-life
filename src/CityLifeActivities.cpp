@@ -106,10 +106,21 @@ namespace CityLife
 
         void ExecuteLivingCrowd(Resident& resident, Player* bot, Hub const& hub, uint32 now,
                                 bool enableSay, uint32 sayCooldownSec, float playerRadius,
-                                uint32 chatCooldownSec, uint32 afkMinSec, uint32 afkMaxSec)
+                                uint32 chatCooldownSec, uint32 afkMinSec, uint32 afkMaxSec,
+                                bool enableAfk)
         {
             if (!bot || !bot->IsInWorld())
                 return;
+
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
+            if (!enableAfk && bot->isAFK())
+            {
+                CrowdClearAfk(bot);
+                if (resident.CrowdPhaseState == CrowdPhase::Afk)
+                    resident.CrowdPhaseState = CrowdPhase::Linger;
+            }
 
             if (resident.Sitting)
             {
@@ -139,7 +150,7 @@ namespace CityLife
             switch (resident.CrowdPhaseState)
             {
                 case CrowdPhase::Afk:
-                    if (now < resident.CrowdPhaseEndMs)
+                    if (enableAfk && now < resident.CrowdPhaseEndMs)
                         return; // Remain completely still
                     CrowdClearAfk(bot);
                     resident.CrowdPhaseState = CrowdPhase::Linger;
@@ -242,7 +253,7 @@ namespace CityLife
 
             // Transition roll
             uint32 roll = urand(1, 100);
-            if (roll <= 15)
+            if (enableAfk && roll <= 15)
             {
                 if (!bot->isAFK())
                     bot->ToggleAFK();
@@ -348,7 +359,7 @@ namespace CityLife
 
             float const angle = std::atan2(dy, dx) + static_cast<float>(M_PI) * 0.5f;
             float const side = botIsLowerGuid ? 1.0f : -1.0f;
-            float const offset = IsRangedDueler(bot) ? 4.8f : 2.4f;
+            float const offset = IsRangedDueler(bot) ? 4.5f : 2.4f;
 
             standX += std::cos(angle) * offset * side;
             standY += std::sin(angle) * offset * side;
@@ -428,6 +439,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || !bot->duel)
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             Player* opponent = bot->duel->Opponent;
             if (!opponent || !opponent->IsInWorld() || !bot->IsAlive() || !opponent->IsAlive())
             {
@@ -505,6 +519,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             if (bot->duel || bot->IsInCombat())
                 return;
 
@@ -520,6 +537,11 @@ namespace CityLife
             // Post-duel recovery if state was flagged and not waiting for meeting
             if (resident.DuelPartnerGuid != 0 && !resident.DuelMeetingSet)
             {
+                if (resident.DuelStagingSlotId != 0)
+                {
+                    PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
+                    resident.DuelStagingSlotId = 0;
+                }
                 DuelRestore(bot);
                 resident.DuelPartnerGuid = 0;
                 resident.DuelCooldownUntilMs = now + duelCooldownSec * 1000;
@@ -564,14 +586,9 @@ namespace CityLife
                 }
 
                 float const dist = bot->GetDistance(opponent);
-                // When within standoff proximity or 8 yards of each other, face and challenge
-                if (dist <= 8.0f)
+                // When within standoff proximity or duel spell range (10 yards), face and challenge
+                if (dist <= 10.0f)
                 {
-                    if (resident.DuelStagingSlotId != 0)
-                    {
-                        PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
-                        resident.DuelStagingSlotId = 0;
-                    }
                     resident.DuelMeetingSet = false;
                     bot->SetFacingToObject(opponent);
                     if (resident.DuelInitiator)
@@ -617,13 +634,19 @@ namespace CityLife
                 ComputeDuelMeetPoint(bot, opponent, *spot, duelMaxDist, meetX, meetY, meetZ);
 
                 PlayerbotsLife::DuelStagingSlot slot;
-                if (PlayerbotsLife::ClaimDuelStagingSlot(hub.MapId, meetX, meetY, meetZ, duelMaxDist,
-                    resident.Token.ActivityId, PlayerbotsLife::ReservationOwner::CityLife, now, 60000, slot))
+                if (!PlayerbotsLife::ClaimDuelStagingSlot(hub.MapId, meetX, meetY, meetZ, duelMaxDist,
+                    resident.Token.ActivityId, PlayerbotsLife::ReservationOwner::CityLife, now, 300000, slot))
                 {
-                    meetX = slot.CenterX;
-                    meetY = slot.CenterY;
-                    resident.DuelStagingSlotId = slot.SlotId;
+                    // No valid staging space available (spacing collision), wait and retry later
+                    resident.DuelPartnerGuid = 0;
+                    resident.DuelInitiator = false;
+                    resident.DuelCooldownUntilMs = now + 4000;
+                    return;
                 }
+
+                meetX = slot.CenterX;
+                meetY = slot.CenterY;
+                resident.DuelStagingSlotId = slot.SlotId;
 
                 resident.DuelMeetX = meetX;
                 resident.DuelMeetY = meetY;
@@ -641,6 +664,7 @@ namespace CityLife
                     oppResident->DuelMeetZ = meetZ;
                     oppResident->DuelMeetingSet = true;
                     oppResident->DuelRendezvousDeadlineMs = resident.DuelRendezvousDeadlineMs;
+                    oppResident->DuelStagingSlotId = slot.SlotId;
 
                     float oppStandX = meetX, oppStandY = meetY, oppStandZ = meetZ;
                     ComputeDuelStandPoint(opponent, bot, meetX, meetY, meetZ, oppStandX, oppStandY, oppStandZ);
@@ -691,6 +715,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             Movement::DismountIfMounted(bot);
 
             uint32 fishingSpell = 7620;
@@ -707,6 +734,9 @@ namespace CityLife
                              bool enableSay, uint32 sayCooldownSec)
         {
             if (!bot || !bot->IsInWorld())
+                return;
+
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
                 return;
 
             Movement::DismountIfMounted(bot);
@@ -744,6 +774,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             if (resident.Sitting)
             {
                 bot->SetStandState(UNIT_STAND_STATE_STAND);
@@ -774,6 +807,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             if (!resident.Sitting)
             {
                 bot->SetStandState(UNIT_STAND_STATE_SIT);
@@ -792,6 +828,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             if (!resident.Sitting)
             {
                 bot->SetStandState(UNIT_STAND_STATE_SIT);
@@ -807,6 +846,9 @@ namespace CityLife
         void ExecuteVisitNpc(Resident& resident, Player* bot, Hub const& hub, uint32 now, uint32 npcFlag)
         {
             if (!bot || !bot->IsInWorld() || bot->isMoving())
+                return;
+
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
                 return;
 
             // Search for nearby creature with matching NPCFlag
@@ -834,6 +876,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             std::list<GameObject*> gameobjects;
             AnyGameObjectInObjectRangeCheck check(bot, 20.0f);
             Acore::GameObjectListSearcher<AnyGameObjectInObjectRangeCheck> searcher(bot, gameobjects, check);
@@ -855,6 +900,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             if (enableInteractions)
             {
                 if (PlayerbotAI* ai = GET_PLAYERBOT_AI(bot))
@@ -873,6 +921,9 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
+                return;
+
             Spot const* spot = sCityLifeMgr.FindSpot(resident.HubId, resident.SpotId);
             if (!spot)
                 return;
@@ -886,6 +937,9 @@ namespace CityLife
         void ExecuteRandomEmote(Resident& resident, Player* bot, Hub const& hub, uint32 now)
         {
             if (!bot || !bot->IsInWorld() || bot->isMoving())
+                return;
+
+            if (resident.Token.GuidLow != 0 && !PlayerbotsLife::ValidateLease(resident.Token))
                 return;
 
             static uint32 const emotes[] = {

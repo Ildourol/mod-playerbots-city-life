@@ -191,7 +191,9 @@ namespace CityLife
         _budgetMode = (budgetModeStr == "count") ? BudgetMode::Count : BudgetMode::Percentage;
         _fixedCount = sConfigMgr->GetOption<uint32>("CityLife.Population.FixedCount", 100);
         _borrowPercent = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.BorrowPercent", 10), 1, 100);
-        _maxTotalPopulation = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.MaxTotal", 120), 1, 2000);
+        _maxTotalPopulation = sConfigMgr->GetOption<uint32>("CityLife.Population.MaxTotal", 120);
+        if (_maxTotalPopulation > 2000)
+            _maxTotalPopulation = 2000;
 
         std::string demandModeStr = Lower(sConfigMgr->GetOption<std::string>("CityLife.Population.DemandMode", "hybrid"));
         if (demandModeStr == "fixed")
@@ -276,6 +278,7 @@ namespace CityLife
         _actPlazaSocial = sConfigMgr->GetOption<bool>("CityLife.Activities.PlazaSocial.Enable", true);
         _actCrowdScenes = sConfigMgr->GetOption<bool>("CityLife.Activities.CrowdScenes.Enable", true);
         _actMountedTravel = sConfigMgr->GetOption<bool>("CityLife.Activities.MountedTravel.Enable", true);
+        _activitiesAfkEnable = sConfigMgr->GetOption<bool>("CityLife.Activities.AFK.Enable", true);
 
         // Living Crowd Scenes
         _crowdEnable = sConfigMgr->GetOption<bool>("CityLife.Crowd.Enable", false);
@@ -570,7 +573,7 @@ namespace CityLife
         return !IsResident(player->GetGUID().GetCounter());
     }
 
-    bool Manager::IsResidentUsable(Player* player) const
+    bool Manager::IsResidentUsable(Player* player, bool allowOwnedDuel) const
     {
         if (!player || !player->GetSession() || !player->IsInWorld())
             return false;
@@ -580,7 +583,9 @@ namespace CityLife
         PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
         if (!ai || ::IsRealPlayer(player) || ai->HasGameClientMaster())
             return false;
-        if (!player->IsAlive() || player->IsInFlight() || player->duel)
+        if (!player->IsAlive() || player->IsInFlight())
+            return false;
+        if (player->duel && !allowOwnedDuel)
             return false;
         if (player->InBattleground() || player->InBattlegroundQueue())
             return false;
@@ -589,6 +594,29 @@ namespace CityLife
         if (_skipGroupedBots && player->GetGroup())
             return false;
         return true;
+    }
+
+    uint32 Manager::GetLiveWorldBotCount() const
+    {
+        uint32 count = 0;
+        std::shared_lock<std::shared_mutex> playerLock(*HashMapHolder<Player>::GetLock());
+        HashMapHolder<Player>::MapType const& players = ObjectAccessor::GetPlayers();
+        for (auto const& pair : players)
+        {
+            Player* p = pair.second;
+            if (!p || !p->GetSession() || !p->IsInWorld())
+                continue;
+            if (::IsRealPlayer(p))
+                continue;
+            if (!sRandomPlayerbotMgr.IsRandomBot(p) &&
+                !const_cast<Manager*>(this)->IsConfiguredBotAccount(p->GetSession()->GetAccountId()))
+                continue;
+            PlayerbotAI* ai = GET_PLAYERBOT_AI(p);
+            if (!ai || ai->HasGameClientMaster() || !p->IsAlive())
+                continue;
+            ++count;
+        }
+        return count;
     }
 
     bool Manager::IsResident(uint32 guidLow) const
@@ -631,8 +659,31 @@ namespace CityLife
                     onlineGuids.push_back(pair.second->GetGUID().GetCounter());
         }
 
-        for (uint32 guidLow : onlineGuids)
+        if (onlineGuids.empty())
+            return candidates;
+
+        // Smart Hybrid Dynamic QueryLimit:
+        // 1. Calculate dynamic census ceiling
+        uint32 dynamicCeiling = _botQueryLimit;
+        if (dynamicCeiling == 0)
         {
+            uint32 liveBots = GetLiveWorldBotCount();
+            dynamicCeiling = std::clamp<uint32>(liveBots / 2, 100, 1500);
+        }
+
+        // 2. Demand-driven early exit target
+        uint32 currentCount = CountResidents(hub.Id);
+        uint32 targetPop = TargetPopulation(hub);
+        uint32 deficit = (targetPop > currentCount) ? (targetPop - currentCount) : 1;
+        uint32 candidateTarget = std::min<uint32>(dynamicCeiling, std::max<uint32>(20, deficit * 5));
+
+        // 3. Rotational sampling across online bots
+        size_t n = onlineGuids.size();
+        size_t offset = urand(0, static_cast<uint32>(n - 1));
+
+        for (size_t i = 0; i < n; ++i)
+        {
+            uint32 guidLow = onlineGuids[(offset + i) % n];
             Player* player = FindPlayer(guidLow);
             if (!player || player->GetLevel() < hub.MinLevel || player->GetLevel() > hub.MaxLevel)
                 continue;
@@ -651,12 +702,14 @@ namespace CityLife
             if (hub.Team != TeamSide::Any && candidate.Team != hub.Team)
                 continue;
             candidates.push_back(candidate);
+
+            if (candidates.size() >= candidateTarget)
+                break;
         }
 
         for (size_t i = candidates.size(); i > 1; --i)
             std::swap(candidates[i - 1], candidates[urand(0, static_cast<uint32>(i - 1))]);
-        if (candidates.size() > _botQueryLimit)
-            candidates.resize(_botQueryLimit);
+
         return candidates;
     }
 
@@ -936,7 +989,9 @@ namespace CityLife
             ? _fixedCount
             : static_cast<uint32>(std::floor(eligiblePoolCount * _borrowPercent / 100.0f));
 
-        return std::min({ requested, _maxTotalPopulation, eligiblePoolCount });
+        if (_maxTotalPopulation > 0)
+            return std::min({ requested, _maxTotalPopulation, eligiblePoolCount });
+        return std::min(requested, eligiblePoolCount);
     }
 
     uint32 Manager::TargetPopulation(Hub const& hub) const
@@ -1307,9 +1362,10 @@ namespace CityLife
         {
             Player* player = FindPlayer(resident->Bot.GuidLow);
             Hub* hub = FindHub(resident->HubId);
+            bool isDueling = (resident->Activity == CitizenActivity::Duel) || (player && player->duel != nullptr);
             bool residenceExpired = resident->ReleaseAt != 0 && resident->ReleaseAt <= now && player &&
-                !player->IsInCombat() && !player->IsBeingTeleported();
-            if (!hub || !IsResidentUsable(player) || residenceExpired)
+                !player->IsInCombat() && !player->IsBeingTeleported() && !isDueling;
+            if (!hub || !IsResidentUsable(player, isDueling) || residenceExpired)
             {
                 ReleaseResident(*resident, residenceExpired && _returnBots);
                 resident = _residents.erase(resident);
@@ -1323,22 +1379,87 @@ namespace CityLife
     {
         RemoveUnavailableResidents();
 
-        // Calculate pool & total budget
-        uint32 eligiblePoolCount = static_cast<uint32>(_residents.size());
-        {
-            std::shared_lock<std::shared_mutex> playerLock(*HashMapHolder<Player>::GetLock());
-            eligiblePoolCount += static_cast<uint32>(ObjectAccessor::GetPlayers().size());
-        }
-
+        // Live World Bot Sensor: measure exact active random bots in the world
+        uint32 eligiblePoolCount = GetLiveWorldBotCount();
         uint32 totalBudget = CalculateTotalBudget(eligiblePoolCount);
 
         std::unordered_map<uint32, uint32> targets;
-        uint32 remaining = totalBudget;
-        for (Hub const& hub : _hubs)
+        if (_distributionMode == DistributionMode::Scaled)
         {
-            uint32 target = std::min(TargetPopulation(hub), remaining);
-            targets[hub.Id] = target;
-            remaining -= target;
+            // Proportional Hub Population Allocation across all active hubs
+            uint32 totalNominal = 0;
+            for (Hub const& hub : _hubs)
+            {
+                if (hub.Enabled && !hub.Spots.empty())
+                    totalNominal += TargetPopulation(hub);
+            }
+
+            if (totalNominal > 0 && totalBudget > 0)
+            {
+                uint32 allocatedTotal = 0;
+                for (Hub const& hub : _hubs)
+                {
+                    if (!hub.Enabled || hub.Spots.empty())
+                    {
+                        targets[hub.Id] = 0;
+                        continue;
+                    }
+
+                    uint32 nominal = TargetPopulation(hub);
+                    uint32 scaled = static_cast<uint32>(std::lround(
+                        static_cast<double>(nominal * totalBudget) / static_cast<double>(totalNominal)));
+
+                    if (nominal > 0 && hub.MinCount > 0)
+                        scaled = std::max(scaled, hub.MinCount);
+
+                    targets[hub.Id] = scaled;
+                    allocatedTotal += scaled;
+                }
+
+                if (allocatedTotal > totalBudget)
+                {
+                    uint32 excess = allocatedTotal - totalBudget;
+                    for (Hub const& hub : _hubs)
+                    {
+                        if (excess == 0)
+                            break;
+                        uint32& t = targets[hub.Id];
+                        uint32 reducible = (t > hub.MinCount) ? (t - hub.MinCount) : 0;
+                        uint32 cut = std::min(reducible, excess);
+                        t -= cut;
+                        excess -= cut;
+                    }
+                }
+                else if (allocatedTotal < totalBudget)
+                {
+                    uint32 remainingBudget = totalBudget - allocatedTotal;
+                    for (Hub const& hub : _hubs)
+                    {
+                        if (remainingBudget == 0)
+                            break;
+                        if (hub.Enabled && !hub.Spots.empty())
+                        {
+                            targets[hub.Id] += 1;
+                            --remainingBudget;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                for (Hub const& hub : _hubs)
+                    targets[hub.Id] = 0;
+            }
+        }
+        else // Legacy sequential allocation
+        {
+            uint32 remaining = totalBudget;
+            for (Hub const& hub : _hubs)
+            {
+                uint32 target = std::min(TargetPopulation(hub), remaining);
+                targets[hub.Id] = target;
+                remaining -= target;
+            }
         }
 
         uint32 changes = 0;
@@ -1525,7 +1646,7 @@ namespace CityLife
                 case CitizenActivity::CrowdSocial:
                     if (_actCrowdScenes && _crowdEnable)
                         Activities::ExecuteLivingCrowd(resident, player, *hub, nowMs, _chatScriptedConversations,
-                            _chatSayCooldownSec, _crowdPlayerRadius, _crowdChatCooldownSec, _crowdAfkMinSec, _crowdAfkMaxSec);
+                            _chatSayCooldownSec, _crowdPlayerRadius, _crowdChatCooldownSec, _crowdAfkMinSec, _crowdAfkMaxSec, _activitiesAfkEnable);
                     break;
                 case CitizenActivity::Duel:
                     if (_actDuels)
@@ -1649,10 +1770,12 @@ namespace CityLife
         uint32 startupTarget = _startupDelaySeconds * IN_MILLISECONDS;
         uint32 startupLeft = _startupElapsedMs < startupTarget ?
             (startupTarget - _startupElapsedMs + 999) / 1000 : 0;
+        uint32 liveBots = GetLiveWorldBotCount();
         handler->PSendSysMessage(
-            "City Life: enabled={} DB={} startup={}s residents={}/{} time={}%% hubs={} crowd={} duels={}",
+            "City Life: enabled={} DB={} startup={}s residents={}/{} (live bots={}) time={}%% hubs={} crowd={} duels={}",
             _enable ? 1 : 0, _databaseReady ? "ready" : "missing", startupLeft,
-            _residents.size(), _maxTotalPopulation, CurrentTimeMultiplier(), _hubs.size(),
+            _residents.size(), _maxTotalPopulation == 0 ? "uncapped" : std::to_string(_maxTotalPopulation).c_str(),
+            liveBots, CurrentTimeMultiplier(), _hubs.size(),
             _crowdEnable ? 1 : 0, _actDuels ? 1 : 0);
         for (Hub const& hub : _hubs)
         {
@@ -1688,8 +1811,10 @@ namespace CityLife
                 default: ++flexCount; break;
             }
         }
-        handler->PSendSysMessage("Crowd: {} | Duelers: {} | Fishers: {} | Dancers: {} | Ambient: {}",
-            crowdCount, duelCount, fisherCount, dancerCount, flexCount);
+        PlayerbotsLife::CooperationSnapshot snap = PlayerbotsLife::GetCooperationSnapshot();
+        handler->PSendSysMessage("Cooperation: Reserved Total={} (City={}, PvP={}) | Leases: Prov={} Active={} Rel={} | DuelSlots={}",
+            snap.TotalReserved, snap.CityLifeCount, snap.PvPLifeCount,
+            snap.ProvisionalCount, snap.ActiveCount, snap.ReleasingCount, snap.ActiveDuelSlots);
     }
 
     void Manager::PrintHelp(ChatHandler* handler) const
@@ -1734,15 +1859,14 @@ namespace CityLife
         }
 
         handler->PSendSysMessage("=== Playerbots Life Coexistence Status ===");
-        handler->PSendSysMessage("Active Modules: CityLife=%s | PvPLife=%s | Artisans=%s",
+        handler->PSendSysMessage("Active Modules: CityLife={} | PvPLife={} | Artisans={}",
             clActive ? "ACTIVE" : "INACTIVE",
             pvpActive ? "ACTIVE" : "INACTIVE",
             artActive ? "ACTIVE" : "INACTIVE");
-        handler->PSendSysMessage("Active Reservations: CityLife=%u | PvPLife=%u | Artisans=%u (Total: %zu)",
+        handler->PSendSysMessage("Active Reservations: CityLife={} | PvPLife={} | Artisans={} (Total: {})",
             clCount, pvpCount, artCount, registry.Owners.size());
-        handler->PSendSysMessage("Compatibility Mode: %s (Anti-Stealing Barrier: %s)",
-            _compatPvPLifeHarmony ? "ENABLED" : "DISABLED",
-            _compatPvPLifeRespectReservations ? "ACTIVE" : "DISABLED");
+        handler->PSendSysMessage("Effective Protection: Shared Registry ACTIVE (Generation: {})",
+            registry.NextGeneration);
     }
 
     bool Manager::HandleDebugCommand(ChatHandler* handler, std::vector<std::string> const& args)

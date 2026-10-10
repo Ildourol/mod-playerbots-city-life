@@ -20,7 +20,8 @@ namespace CityLife
     {
         void ExecuteLivingCrowd(Resident& resident, Player* bot, Hub const& hub, uint32 now,
                                 bool enableSay, uint32 sayCooldownSec, float playerRadius,
-                                uint32 chatCooldownSec, uint32 afkMinSec, uint32 afkMaxSec);
+                                uint32 chatCooldownSec, uint32 afkMinSec, uint32 afkMaxSec,
+                                bool enableAfk = true);
 
         void ExecuteDuel(Resident& resident, Player* bot, Hub const& hub, uint32 now,
                          uint32 duelCooldownSec, float duelMaxDist, bool meetingPointEnabled = true);

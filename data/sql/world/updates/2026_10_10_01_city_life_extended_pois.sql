@@ -2,11 +2,34 @@
 -- Extended POIs and Schema Migration (Ported from mod-city-bots)
 -- Idempotent script for AzerothCore WORLD database.
 
--- 1. Extend city_life_spot with POI classification, district, and scene pairing
-ALTER TABLE `city_life_spot`
-    ADD COLUMN IF NOT EXISTS `poi_type` TINYINT UNSIGNED NOT NULL DEFAULT 7 COMMENT '0=Inn,1=AH,2=Mailbox,3=Tavern,4=Trainer,5=Dock,6=WallPatrol,7=Plaza,8=Vendor,9=DuelRing,10=InnBed,11=Bank' AFTER `category`,
-    ADD COLUMN IF NOT EXISTS `district` VARCHAR(32) NOT NULL DEFAULT '' AFTER `poi_type`,
-    ADD COLUMN IF NOT EXISTS `partner_spot_id` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `district`;
+-- 1. Extend city_life_spot with POI classification, district, and scene pairing (MySQL compatible)
+DROP PROCEDURE IF EXISTS `AddColumnUnlessExists_CityLife`;
+DELIMITER //
+CREATE PROCEDURE `AddColumnUnlessExists_CityLife`(
+    IN tableName VARCHAR(64),
+    IN colName VARCHAR(64),
+    IN colDef VARCHAR(255)
+)
+BEGIN
+    IF NOT EXISTS (
+        SELECT * FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = tableName
+        AND COLUMN_NAME = colName
+    ) THEN
+        SET @sql = CONCAT('ALTER TABLE `', tableName, '` ADD COLUMN `', colName, '` ', colDef);
+        PREPARE stmt FROM @sql;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+    END IF;
+END //
+DELIMITER ;
+
+CALL AddColumnUnlessExists_CityLife('city_life_spot', 'poi_type', 'TINYINT UNSIGNED NOT NULL DEFAULT 7 COMMENT \'0=Inn,1=AH,2=Mailbox,3=Tavern,4=Trainer,5=Dock,6=WallPatrol,7=Plaza,8=Vendor,9=DuelRing,10=InnBed,11=Bank\' AFTER `category`');
+CALL AddColumnUnlessExists_CityLife('city_life_spot', 'district', 'VARCHAR(32) NOT NULL DEFAULT \'\' AFTER `poi_type`');
+CALL AddColumnUnlessExists_CityLife('city_life_spot', 'partner_spot_id', 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER `district`');
+
+DROP PROCEDURE IF EXISTS `AddColumnUnlessExists_CityLife`;
 
 -- 2. Ensure duel sub-hubs exist in city_life_hub
 INSERT INTO `city_life_hub`
@@ -129,3 +152,12 @@ ON DUPLICATE KEY UPDATE `poi_type`=VALUES(`poi_type`), `district`=VALUES(`distri
 INSERT INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
 SELECT h.id, 'ORGGate_DuelRing_2', 'duel', 1, 1283.00, -4394.50, 26.35, 0.41, 6, 100, 9, 'GateDuelRing', 0 FROM `city_life_hub` h WHERE h.name='OrgrimmarGate'
 ON DUPLICATE KEY UPDATE `poi_type`=VALUES(`poi_type`), `district`=VALUES(`district`);
+
+INSERT INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
+SELECT h.id, 'GSDuel_Ring_1', 'duel', 1, -9462.85, 75.32, 56.45, 1.25, 6, 100, 9, 'GoldshireDuelRing', 0 FROM `city_life_hub` h WHERE h.name='GoldshireDuel'
+ON DUPLICATE KEY UPDATE `poi_type`=VALUES(`poi_type`), `district`=VALUES(`district`);
+
+INSERT INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
+SELECT h.id, 'GSDuel_Ring_2', 'duel', 1, -9450.40, 85.10, 56.55, 3.80, 6, 100, 9, 'GoldshireDuelRing', 0 FROM `city_life_hub` h WHERE h.name='GoldshireDuel'
+ON DUPLICATE KEY UPDATE `poi_type`=VALUES(`poi_type`), `district`=VALUES(`district`);
+
