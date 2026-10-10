@@ -29,28 +29,56 @@ namespace CityLife
         void Update(uint32 diff);
         bool HandleCommand(ChatHandler* handler, std::string const& text);
 
+        // Interaction & Player Event Callbacks
+        void OnPlayerZoneUpdate(Player* player, uint32 zoneId);
+        void OnPlayerLogin(Player* player);
+        void OnPlayerLogout(Player* player);
+        void DisengageResident(uint32 guidLow);
+        bool IsResident(uint32 guidLow) const;
+
+        // Activity Helper Methods
+        Spot const* FindSpot(uint32 hubId, uint32 spotId) const;
+        Player* FindCrowdChatPartner(uint32 hubId, Player* bot);
+        void BeginCrowdChat(Player* bot, Player* partner, Resident& resident, uint32 now);
+        void ClearResidentChatPartner(uint32 partnerGuidLow, uint32 expectedGuidLow);
+        Player* FindDuelOpponent(Hub const& hub, Player* bot, float centerX, float centerY, float radius);
+        Resident* FindResident(uint32 guidLow);
+
+        // Config Accessors
+        bool IsInteractionsEnabled() const { return _enableInteractions; }
+        bool IsPlayerTradingEnabled() const { return _enablePlayerTrading; }
+        bool IsBlockAchievementsEnabled() const { return _blockAchievements; }
+
     private:
         Manager() = default;
 
         bool VerifyDatabase();
         bool LoadData();
         void ImportPlayerbotDefaults();
+        bool CheckCoexistence();
 
         TeamSide TeamForRace(uint8 race) const;
         Player* FindPlayer(uint32 guidLow) const;
         bool IsConfiguredBotAccount(uint32 accountId);
         bool IsCandidate(Player* player);
-        bool IsResident(uint32 guidLow) const;
         bool IsResidentUsable(Player* player) const;
         std::vector<BotCandidate> LoadCandidates(Hub const& hub);
 
         Hub* FindHub(uint32 hubId);
         Hub* FindHub(std::string const& name);
+        Hub const* FindHubByZone(uint32 zoneId) const;
         bool IsStaticServiceSpot(Hub const& hub, Spot const& spot) const;
-        Spot const* ChooseSpot(Hub const& hub, uint32 ignoredSpotId = 0) const;
+        Spot const* ChooseSpot(Hub const& hub, uint32 ignoredSpotId = 0, bool filterByDistrict = false, bool targetHubDistrict = false, Player* botForPathCheck = nullptr) const;
+        bool UsesAlternatingHubRoute(std::string const& hubName) const;
+        bool IsHubDistrict(std::string const& hubName, std::string const& district) const;
+        bool IsOutlyingDistrict(std::string const& hubName, std::string const& district) const;
+        CitizenRole DetermineRole(Hub const& hub, Spot const& spot, BotCandidate const& candidate) const;
+        CitizenActivity ChooseInitialActivity(CitizenRole role, Spot const& spot) const;
+
         uint32 CountResidents(uint32 hubId) const;
         uint32 TargetPopulation(Hub const& hub) const;
         uint32 CurrentTimeMultiplier() const;
+        uint32 CalculateTotalBudget(uint32 eligiblePoolCount) const;
 
         bool AddResident(Hub const& hub);
         void ReleaseResident(Resident const& resident, bool returnHome);
@@ -64,13 +92,15 @@ namespace CityLife
         void ApplyCityStrategies(Player* player) const;
         void SetStayPosition(Player* player, Resident const& resident) const;
         void ClearCityStrategies(Player* player) const;
-        void MoveBot(Player* player, uint32 mapId, float x, float y, float z, float o, bool teleport) const;
-        void TryEmote(Player* player) const;
 
+        // Command Handlers
         void PrintStatus(ChatHandler* handler) const;
+        void PrintCompat(ChatHandler* handler) const;
         void PrintHelp(ChatHandler* handler) const;
+        void PrintDebugStatus(ChatHandler* handler) const;
         bool HandleHubCommand(ChatHandler* handler, std::vector<std::string> const& args);
         bool HandleSpotCommand(ChatHandler* handler, std::vector<std::string> const& args);
+        bool HandleDebugCommand(ChatHandler* handler, std::vector<std::string> const& args);
 
         bool _enable = true;
         bool _databaseReady = false;
@@ -80,6 +110,22 @@ namespace CityLife
         uint32 _startupElapsedMs = 0;
         uint32 _timerMs = 0;
 
+        // Population Budget & Demand Profiles
+        BudgetMode _budgetMode = BudgetMode::Percentage;
+        uint32 _fixedCount = 150;
+        uint32 _borrowPercent = 12;
+        uint32 _maxTotalPopulation = 150;
+        DemandMode _demandMode = DemandMode::Hybrid;
+        DistributionMode _distributionMode = DistributionMode::Scaled;
+        uint32 _baselinePercent = 20;
+        uint32 _burstGraceSeconds = 180;
+        uint32 _maxChangesPerTick = 3;
+
+        // Compatibility & Anti-Stealing Barrier
+        bool _compatPvPLifeHarmony = true;
+        bool _compatPvPLifeRespectReservations = true;
+
+        // Candidate Filters & Safety
         bool _usePlayerbotConfig = true;
         std::string _botAccountPrefix = "auto";
         uint32 _botAccountMin = 0;
@@ -88,15 +134,15 @@ namespace CityLife
         bool _skipGroupedBots = true;
         bool _respectPlayerbotActivity = false;
         bool _returnBots = true;
-        uint32 _maxTotalPopulation = 300;
-        uint32 _maxChangesPerTick = 3;
 
+        // Time Scaling
         bool _timeScaling = true;
         uint32 _morningMultiplier = 60;
         uint32 _dayMultiplier = 80;
         uint32 _eveningMultiplier = 100;
         uint32 _nightMultiplier = 25;
 
+        // Behavior & Relocation
         bool _roaming = true;
         uint32 _relocateMinSeconds = 180;
         uint32 _relocateMaxSeconds = 600;
@@ -111,9 +157,64 @@ namespace CityLife
         std::unordered_set<std::string> _staticServiceCategories;
         std::string _nonCombatStrategies = "+stay,-follow,-passive,-grind,-rpg,-travel,-duel,-pvp";
 
+        // Activity Switches
+        bool _actLeaveInn = true;
+        bool _actReturnToInn = true;
+        bool _actRoaming = true;
+        bool _actWallWalking = true;
+        bool _actTavernSitting = true;
+        bool _actTavernDrinking = true;
+        bool _actRandomEmotes = true;
+        bool _actAuctionHouse = true;
+        bool _actMailbox = true;
+        bool _actTrainer = true;
+        bool _actFoodVendor = true;
+        bool _actDuelWatching = true;
+        bool _actFishing = true;
+        bool _actDuels = true;
+        bool _actInnDancing = true;
+        bool _actPlazaSocial = true;
+        bool _actCrowdScenes = true;
+        bool _actMountedTravel = true;
+
+        // Living Crowd Settings
+        bool _crowdEnable = true;
+        float _crowdPlayerRadius = 60.0f;
+        uint32 _crowdChatCooldownSec = 90;
+        uint32 _crowdAfkMinSec = 60;
+        uint32 _crowdAfkMaxSec = 180;
+
+        // Duels Settings
+        uint32 _duelCooldownSec = 45;
+        bool _duelAllowPlayerChallenge = true;
+        float _duelMaxDistance = 40.0f;
+
+        // Movement & Sink Settings
+        uint32 _mountBetweenPoiChance = 90;
+        bool _sinkForensics = true;
+        uint32 _maxPathRefuseStreak = 3;
+
+        // Chat & Interaction Settings
+        bool _chatScriptedConversations = true;
+        bool _chatGreetings = true;
+        bool _chatUnrestricted = false;
+        uint32 _chatRandomSayChance = 0;
+        uint32 _chatSayCooldownSec = 30;
+        bool _enableInteractions = false;
+        bool _enablePlayerTrading = false;
+        bool _enableBuyFood = false;
+        bool _blockAchievements = true;
+
+        // Advanced Micro-Behaviors (Ported from mod-city-bots)
+        bool _alternatingDistricts = true;
+        bool _duelMeetingPoint = true;
+        bool _duelTacticalRange = true;
+        bool _waterAvoidance = true;
+
         std::vector<Hub> _hubs;
         std::vector<Resident> _residents;
         std::unordered_map<uint32, bool> _botAccountCache;
+        std::unordered_map<uint32, uint32> _hubLastRealPlayerTime; // HubId -> timestamp
     };
 }
 

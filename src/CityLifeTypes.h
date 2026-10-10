@@ -21,6 +21,83 @@ namespace CityLife
         Any = 2
     };
 
+    enum class CitizenRole : uint8
+    {
+        Flex = 0,
+        InnDancer = 1,
+        PlazaTalker = 2,
+        GateDuelist = 3,
+        GoldshireDuelist = 4,
+        Fisher = 5,
+        Crowd = 6
+    };
+
+    enum class CitizenActivity : uint8
+    {
+        LeaveInn = 0,
+        VisitAuctionHouse = 1,
+        VisitMailbox = 2,
+        BuyFood = 3,
+        WanderDistrict = 4,
+        SitInTavern = 5,
+        WatchDuels = 6,
+        VisitTrainer = 7,
+        DrinkInTavern = 8,
+        WalkCityWalls = 9,
+        ReturnToInn = 10,
+        ReleaseCycle = 11,
+        RandomEmote = 12,
+        FishAtDocks = 13,
+        Idle = 14,
+        Duel = 15,
+        InnDance = 16,
+        PlazaSocial = 17,
+        CrowdSocial = 18
+    };
+
+    enum class CityPoiType : uint8
+    {
+        Inn = 0,
+        AuctionHouse = 1,
+        Mailbox = 2,
+        Tavern = 3,
+        Trainer = 4,
+        Dock = 5,
+        WallPatrol = 6,
+        Plaza = 7,
+        Vendor = 8,
+        DuelRing = 9,
+        InnBed = 10,
+        Bank = 11
+    };
+
+    enum class CrowdPhase : uint8
+    {
+        Linger = 0,
+        Afk = 1,
+        WanderOut = 2,
+        WanderBack = 3
+    };
+
+    enum class BudgetMode : uint8
+    {
+        Count = 0,
+        Percentage = 1
+    };
+
+    enum class DemandMode : uint8
+    {
+        Fixed = 0,
+        Dynamic = 1,
+        Hybrid = 2
+    };
+
+    enum class DistributionMode : uint8
+    {
+        Legacy = 0,
+        Scaled = 1
+    };
+
     struct Spot
     {
         uint32 Id = 0;
@@ -33,6 +110,9 @@ namespace CityLife
         float O = 0.0f;
         float Radius = 3.0f;
         uint32 Weight = 100;
+        CityPoiType PoiType = CityPoiType::Plaza;
+        std::string District;
+        uint32 PartnerSpotId = 0;
     };
 
     struct Hub
@@ -44,11 +124,16 @@ namespace CityLife
         uint8 MinLevel = 1;
         uint8 MaxLevel = 80;
         uint32 MapId = 0;
+        uint32 ZoneId = 0;
         uint32 DefaultPopulation = 0;
         uint32 ConfiguredPopulation = 0;
+        uint32 MinCount = 0;
+        uint32 MaxCount = 0;
         uint32 Priority = 100;
         bool UseTimeScaling = true;
         uint32 ResidenceSeconds = 0;
+        bool DuelHub = false;
+        bool SocialHub = false;
         std::vector<Spot> Spots;
     };
 
@@ -82,6 +167,47 @@ namespace CityLife
         uint32 NextReservationRefreshAt = 0;
         uint32 ReleaseAt = 0;
         bool Stationary = false;
+
+        // Unified Activity & Role State
+        CitizenRole Role = CitizenRole::Flex;
+        CitizenActivity Activity = CitizenActivity::Idle;
+        uint32 ActivityStartMs = 0;
+        uint32 ActivityDurationMs = 0;
+        bool AtSpot = false;
+        bool Sitting = false;
+        uint32 LastSayMs = 0;
+
+        // Navigation, Mounting & Sink Forensics
+        float LastSweepZ = 0.0f;
+        uint32 PathRefuseStreak = 0;
+        uint32 MountDecisionSpotId = 0;
+        uint32 MountAttemptMs = 0;
+
+        // Living Crowd Scene State
+        CrowdPhase CrowdPhaseState = CrowdPhase::Linger;
+        uint32 CrowdPhaseEndMs = 0;
+        uint32 CrowdHomeSpotId = 0;
+        uint32 LastCrowdChatMs = 0;
+        uint32 ChatPartnerGuid = 0;
+        uint32 ChatDeadlineMs = 0;
+        uint8 ChatLineIdx = 0;
+        int16 ChatDialogueId = -1;
+        bool ChatInitiator = false;
+
+        // Paired Duel & Tactical Combat State
+        uint32 DuelPartnerGuid = 0;
+        uint32 DuelStateMs = 0;
+        uint32 DuelCooldownUntilMs = 0;
+        bool DuelInitiator = false;
+        float DuelMeetX = 0.0f;
+        float DuelMeetY = 0.0f;
+        float DuelMeetZ = 0.0f;
+        bool DuelMeetingSet = false;
+        uint32 DuelRendezvousDeadlineMs = 0;
+        uint32 DuelLastRepositionMs = 0;
+
+        // Alternating District Roam State
+        bool LastRoamWasHub = false;
     };
 }
 
