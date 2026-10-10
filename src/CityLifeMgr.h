@@ -113,9 +113,9 @@ namespace CityLife
 
         // Population Budget & Demand Profiles
         BudgetMode _budgetMode = BudgetMode::Percentage;
-        uint32 _fixedCount = 150;
-        uint32 _borrowPercent = 12;
-        uint32 _maxTotalPopulation = 150;
+        uint32 _fixedCount = 100;
+        uint32 _borrowPercent = 10;
+        uint32 _maxTotalPopulation = 120;
         DemandMode _demandMode = DemandMode::Hybrid;
         DistributionMode _distributionMode = DistributionMode::Scaled;
         uint32 _baselinePercent = 20;

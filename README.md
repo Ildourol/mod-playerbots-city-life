@@ -21,7 +21,7 @@ City Life populates capitals, towns, and popular social hubs with configurable A
 - **Weighted Hotspot Distribution:** Dynamic distribution across functional categories: `auction`, `bank`, `mail`, `flight`, `square`, `tavern`, and `travel`. Auction house and bank spots receive boosted weighting with stationary patron ratios.
 - **Time-of-Day Dynamic Scaling:** Realistic morning, daytime, evening, and nighttime population curves with gradual arrivals and departures.
 - **Mutual Anti-Stealing Reservation Barrier:** Thread-safe, standalone-safe shared reservation registry (`PlayerbotsLife::ReservationRegistry`) ensuring bots reserved by City Life are never stolen or commanded by `mod-playerbots-pvp-life`, and vice versa.
-- **Conservative Population Borrowing Budget:** Strict default cap of 12% eligible pool / 150 bots max guarantees that ≥ 76% of random playerbots remain free to roam, quest, run dungeons, and engage in open-world activities.
+- **Conservative Population Borrowing Budget:** Strict default cap of 10% eligible pool / 120 bots max (configured for a 1,000-bot server) guarantees that ≥ 80% (800+ bots) of random playerbots remain completely free to roam, quest, run dungeons, and engage in open-world activities.
 - **Zero Bot Tampering Invariant:** Bots are borrowed strictly AS-IS from the natural Playerbot pool with zero artificial level modifications, zero talent changes, and zero stat inflation.
 - **Zero GM Spam Protection:** Game Masters and administrators are strictly exempt from unsolicited duel challenges, whispers, or broadcasts.
 - **Silent-by-Default Operation:** All ambient chatter, scripted dialogues, and greetings default to OFF (`0`) in config for a completely unobtrusive server experience out of the box.
