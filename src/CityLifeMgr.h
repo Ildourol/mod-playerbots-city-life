@@ -27,6 +27,7 @@ namespace CityLife
 
         void LoadConfig();
         void Update(uint32 diff);
+        void Shutdown();
         bool HandleCommand(ChatHandler* handler, std::string const& text);
 
         // Interaction & Player Event Callbacks

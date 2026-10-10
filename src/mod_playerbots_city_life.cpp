@@ -38,6 +38,7 @@ public:
 
     void OnShutdown() override
     {
+        sCityLifeMgr.Shutdown();
         PlayerbotsLife::UnregisterActiveModule(PlayerbotsLife::ModuleSystemFlags::MODULE_CITY_LIFE);
     }
 };

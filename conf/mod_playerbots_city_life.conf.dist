@@ -173,7 +173,8 @@ CityLife.Activities.MountedTravel.Enable = 1
 ###################################################################################################
 
 # Enable living-crowd scenes at Stormwind Trade District and Orgrimmar Valley of Strength.
-CityLife.Crowd.Enable = 1
+# Set to 0 by default for completely silent out-of-the-box operation; enable as desired.
+CityLife.Crowd.Enable = 0
 
 # Real-player proximity radius (in yards). Crowd logic wakes when a player enters this range.
 CityLife.Crowd.PlayerRadius = 60.0
@@ -225,10 +226,12 @@ CityLife.Movement.MaxPathRefuseStreak = 3
 ###################################################################################################
 
 # Enable canned paired conversations between bots in crowd and plaza areas.
-CityLife.Chat.ScriptedConversations = 1
+# Set to 0 by default for silent out-of-the-box operation; enable if verbal chatter is desired.
+CityLife.Chat.ScriptedConversations = 0
 
 # Enable friendly greetings directed at nearby real players.
-CityLife.Chat.Greetings = 1
+# Set to 0 by default for silent out-of-the-box operation.
+CityLife.Chat.Greetings = 0
 
 # Allow unrestricted random /say chatter (disabled by default to prevent cascade).
 CityLife.Chat.Unrestricted = 0

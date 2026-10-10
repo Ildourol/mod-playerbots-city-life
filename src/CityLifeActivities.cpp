@@ -537,6 +537,11 @@ namespace CityLife
                 // Timeout check (15 seconds)
                 if (now >= resident.DuelRendezvousDeadlineMs)
                 {
+                    if (resident.DuelStagingSlotId != 0)
+                    {
+                        PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
+                        resident.DuelStagingSlotId = 0;
+                    }
                     resident.DuelMeetingSet = false;
                     resident.DuelPartnerGuid = 0;
                     resident.DuelCooldownUntilMs = now + 10 * 1000;
@@ -547,6 +552,11 @@ namespace CityLife
                 Player* opponent = ObjectAccessor::FindPlayer(oppGuid);
                 if (!opponent || !opponent->IsInWorld() || opponent->duel || opponent->IsInCombat())
                 {
+                    if (resident.DuelStagingSlotId != 0)
+                    {
+                        PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
+                        resident.DuelStagingSlotId = 0;
+                    }
                     resident.DuelMeetingSet = false;
                     resident.DuelPartnerGuid = 0;
                     resident.DuelCooldownUntilMs = now + 10 * 1000;
@@ -557,6 +567,11 @@ namespace CityLife
                 // When within standoff proximity or 8 yards of each other, face and challenge
                 if (dist <= 8.0f)
                 {
+                    if (resident.DuelStagingSlotId != 0)
+                    {
+                        PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
+                        resident.DuelStagingSlotId = 0;
+                    }
                     resident.DuelMeetingSet = false;
                     bot->SetFacingToObject(opponent);
                     if (resident.DuelInitiator)
@@ -600,6 +615,15 @@ namespace CityLife
                 // Calculate mutual meeting point
                 float meetX = spot->X, meetY = spot->Y, meetZ = spot->Z;
                 ComputeDuelMeetPoint(bot, opponent, *spot, duelMaxDist, meetX, meetY, meetZ);
+
+                PlayerbotsLife::DuelStagingSlot slot;
+                if (PlayerbotsLife::ClaimDuelStagingSlot(hub.MapId, meetX, meetY, meetZ, duelMaxDist,
+                    resident.Token.ActivityId, PlayerbotsLife::ReservationOwner::CityLife, now, 60000, slot))
+                {
+                    meetX = slot.CenterX;
+                    meetY = slot.CenterY;
+                    resident.DuelStagingSlotId = slot.SlotId;
+                }
 
                 resident.DuelMeetX = meetX;
                 resident.DuelMeetY = meetY;

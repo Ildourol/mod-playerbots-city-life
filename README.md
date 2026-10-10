@@ -22,6 +22,11 @@ City Life populates capitals, towns, and popular social hubs with configurable A
 - **Time-of-Day Dynamic Scaling:** Realistic morning, daytime, evening, and nighttime population curves with gradual arrivals and departures.
 - **Mutual Anti-Stealing Reservation Barrier:** Thread-safe, standalone-safe shared reservation registry (`PlayerbotsLife::ReservationRegistry`) ensuring bots reserved by City Life are never stolen or commanded by `mod-playerbots-pvp-life`, and vice versa.
 - **Conservative Population Borrowing Budget:** Strict default cap of 12% eligible pool / 150 bots max guarantees that ≥ 76% of random playerbots remain free to roam, quest, run dungeons, and engage in open-world activities.
+- **Zero Bot Tampering Invariant:** Bots are borrowed strictly AS-IS from the natural Playerbot pool with zero artificial level modifications, zero talent changes, and zero stat inflation.
+- **Zero GM Spam Protection:** Game Masters and administrators are strictly exempt from unsolicited duel challenges, whispers, or broadcasts.
+- **Silent-by-Default Operation:** All ambient chatter, scripted dialogues, and greetings default to OFF (`0`) in config for a completely unobtrusive server experience out of the box.
+- **Instant Disengagement on Invite or Logout:** Residents immediately drop city behaviors if invited to a player group, commanded by an owner, or logged out.
+- **Shared Duel Staging Lattice (20yd Spacing):** Prevents duel ring overlap outside capital gates when running alongside `mod-playerbots-pvp-life`.
 - **Zero Feature Suppression Coexistence:** Fully compatible with `mod-playerbots-pvp-life`. Both modules can run simultaneously—including dueling outside capital gates—without disabling or yielding any features.
 - **Comprehensive GM Commands:** Real-time runtime tools for tuning hubs, recording exact hotspot coordinates in-game, and monitoring system health.
 

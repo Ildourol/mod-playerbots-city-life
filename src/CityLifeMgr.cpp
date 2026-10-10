@@ -278,7 +278,7 @@ namespace CityLife
         _actMountedTravel = sConfigMgr->GetOption<bool>("CityLife.Activities.MountedTravel.Enable", true);
 
         // Living Crowd Scenes
-        _crowdEnable = sConfigMgr->GetOption<bool>("CityLife.Crowd.Enable", true);
+        _crowdEnable = sConfigMgr->GetOption<bool>("CityLife.Crowd.Enable", false);
         _crowdPlayerRadius = sConfigMgr->GetOption<float>("CityLife.Crowd.PlayerRadius", 60.0f);
         _crowdChatCooldownSec = sConfigMgr->GetOption<uint32>("CityLife.Crowd.ChatCooldownSec", 90);
         _crowdAfkMinSec = sConfigMgr->GetOption<uint32>("CityLife.Crowd.AfkMinSec", 60);
@@ -294,9 +294,9 @@ namespace CityLife
         _sinkForensics = sConfigMgr->GetOption<bool>("CityLife.Movement.SinkForensics", true);
         _maxPathRefuseStreak = sConfigMgr->GetOption<uint32>("CityLife.Movement.MaxPathRefuseStreak", 3);
 
-        // Chat & Interactions
-        _chatScriptedConversations = sConfigMgr->GetOption<bool>("CityLife.Chat.ScriptedConversations", true);
-        _chatGreetings = sConfigMgr->GetOption<bool>("CityLife.Chat.Greetings", true);
+        // Chat & Interactions (Default OFF for silent out-of-the-box operation)
+        _chatScriptedConversations = sConfigMgr->GetOption<bool>("CityLife.Chat.ScriptedConversations", false);
+        _chatGreetings = sConfigMgr->GetOption<bool>("CityLife.Chat.Greetings", false);
         _chatUnrestricted = sConfigMgr->GetOption<bool>("CityLife.Chat.Unrestricted", false);
         _chatRandomSayChance = std::min<uint32>(100, sConfigMgr->GetOption<uint32>("CityLife.Chat.RandomSayChance", 0));
         _chatSayCooldownSec = sConfigMgr->GetOption<uint32>("CityLife.Chat.SayCooldownSec", 30);
@@ -335,8 +335,8 @@ namespace CityLife
             return;
 
         std::string configuredPrefix = sConfigMgr->GetOption<std::string>(
-            "AiPlayerbot.RandomBotAccountPrefix", "rndbot");
-        uint32 loginDelay = sConfigMgr->GetOption<uint32>("AiPlayerbot.DisabledWithoutRealPlayerLoginDelay", 30);
+            "AiPlayerbot.RandomBotAccountPrefix", "rndbot", false);
+        uint32 loginDelay = sConfigMgr->GetOption<uint32>("AiPlayerbot.DisabledWithoutRealPlayerLoginDelay", 30, false);
         std::string prefix = Lower(_botAccountPrefix);
         if (prefix.empty() || prefix == "auto" || prefix == "playerbot" || prefix == "playerbots")
             _botAccountPrefix = configuredPrefix;
@@ -345,7 +345,7 @@ namespace CityLife
 
     bool Manager::CheckCoexistence()
     {
-        bool cbActive = sConfigMgr->GetOption<bool>("CitizenBots.Enable", false);
+        bool cbActive = sConfigMgr->GetOption<bool>("CitizenBots.Enable", false, false);
         if (cbActive)
         {
             LOG_WARN("module", "[CityLife] CONFLICT: mod-city-bots appears enabled (CitizenBots.Enable=1). "
@@ -1020,7 +1020,12 @@ namespace CityLife
 
     void Manager::OnPlayerLogout(Player* player)
     {
-        (void)player;
+        if (player && player->GetSession() && player->GetSession()->IsBot())
+        {
+            uint32 guid = player->GetGUID().GetCounter();
+            if (IsResident(guid))
+                DisengageResident(guid);
+        }
     }
 
     Player* Manager::FindCrowdChatPartner(uint32 hubId, Player* bot)
@@ -1150,6 +1155,34 @@ namespace CityLife
                 return opponent;
             }
         }
+
+        if (_duelAllowPlayerChallenge && bot->GetMap())
+        {
+            uint32 nowSec = GameTimeSeconds();
+            for (auto const& pRef : bot->GetMap()->GetPlayers())
+            {
+                Player* opponent = pRef.GetSource();
+                if (!opponent || !opponent->IsInWorld() || opponent->duel || opponent->IsInCombat())
+                    continue;
+
+                if (opponent->IsGameMaster() || (opponent->GetSession() && (opponent->GetSession()->IsBot() || opponent->GetSession()->GetSecurity() > SEC_PLAYER)))
+                    continue;
+
+                uint32 oppGuidLow = opponent->GetGUID().GetCounter();
+                if (!PlayerbotsLife::CanChallengeRealPlayer(oppGuidLow, nowSec))
+                    continue;
+
+                if (opponent->GetDistance2d(centerX, centerY) > radius)
+                    continue;
+
+                if (!bot->IsWithinLOSInMap(opponent))
+                    continue;
+
+                PlayerbotsLife::RecordRealPlayerChallenge(oppGuidLow, nowSec, _duelCooldownSec);
+                return opponent;
+            }
+        }
+
         return nullptr;
     }
 
@@ -1183,63 +1216,75 @@ namespace CityLife
         if (candidates.empty())
             return false;
 
-        BotCandidate const& bot = candidates.front();
-        Player* player = FindPlayer(bot.GuidLow);
-        if (!IsCandidate(player))
-            return false;
-        if (!PlayerbotsLife::TryReserve(bot.GuidLow, PlayerbotsLife::ReservationOwner::CityLife))
-            return false;
+        for (BotCandidate const& bot : candidates)
+        {
+            Player* player = FindPlayer(bot.GuidLow);
+            if (!IsCandidate(player))
+                continue;
 
-        Resident resident;
-        resident.Bot = bot;
-        resident.OriginalMap = player->GetMapId();
-        resident.OriginalX = player->GetPositionX();
-        resident.OriginalY = player->GetPositionY();
-        resident.OriginalZ = player->GetPositionZ();
-        resident.OriginalO = player->GetOrientation();
-        AssignSpot(resident, hub, *spot, true);
+            PlayerbotsLife::LeaseToken token;
+            if (!PlayerbotsLife::TryAcquireLease(token, bot.GuidLow, PlayerbotsLife::ReservationOwner::CityLife,
+                                                 hub.Id, PlayerbotsLife::LeaseState::Active))
+                continue;
 
-        uint32 now = GameTimeSeconds();
-        resident.NextMoveAt = now + urand(_relocateMinSeconds, _relocateMaxSeconds);
-        resident.NextEmoteAt = now + urand(_emoteMinSeconds, _emoteMaxSeconds);
-        resident.NextReservationRefreshAt = now + ReservationRefreshSeconds;
-        resident.ReleaseAt = hub.ResidenceSeconds == 0 ? 0 : now + hub.ResidenceSeconds;
-        resident.LastSweepZ = resident.TargetZ;
+            Resident resident;
+            resident.Bot = bot;
+            resident.Token = token;
+            resident.OriginalMap = player->GetMapId();
+            resident.OriginalX = player->GetPositionX();
+            resident.OriginalY = player->GetPositionY();
+            resident.OriginalZ = player->GetPositionZ();
+            resident.OriginalO = player->GetOrientation();
+            AssignSpot(resident, hub, *spot, true);
 
-        ApplyCityStrategies(player);
-        SetStayPosition(player, resident);
-        if (sRandomPlayerbotMgr.IsRandomBot(player))
-            sRandomPlayerbotMgr.ScheduleTeleport(bot.GuidLow,
-                std::max(ReservationSeconds, hub.ResidenceSeconds + MINUTE));
+            uint32 now = GameTimeSeconds();
+            resident.NextMoveAt = now + urand(_relocateMinSeconds, _relocateMaxSeconds);
+            resident.NextEmoteAt = now + urand(_emoteMinSeconds, _emoteMaxSeconds);
+            resident.NextReservationRefreshAt = now + ReservationRefreshSeconds;
+            resident.ReleaseAt = hub.ResidenceSeconds == 0 ? 0 : now + hub.ResidenceSeconds;
+            resident.LastSweepZ = resident.TargetZ;
 
-        Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, true);
-        _residents.push_back(resident);
+            ApplyCityStrategies(player);
+            SetStayPosition(player, resident);
+            if (sRandomPlayerbotMgr.IsRandomBot(player))
+                sRandomPlayerbotMgr.ScheduleTeleport(bot.GuidLow,
+                    std::max(ReservationSeconds, hub.ResidenceSeconds + MINUTE));
 
-        if (_debug)
-            LOG_INFO("module", "[CityLife] Added resident {} (lvl {}, role {}) to {}/{}",
-                bot.Name, bot.Level, static_cast<uint32>(resident.Role), hub.Name, spot->Name);
-        return true;
+            Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, true);
+            _residents.push_back(resident);
+
+            if (_debug)
+                LOG_INFO("module", "[CityLife] Added resident {} (lvl {}, role {}) to {}/{}",
+                    bot.Name, bot.Level, static_cast<uint32>(resident.Role), hub.Name, spot->Name);
+            return true;
+        }
+        return false;
     }
 
     void Manager::ReleaseResident(Resident const& resident, bool returnHome)
     {
-        PlayerbotsLife::Release(resident.Bot.GuidLow, PlayerbotsLife::ReservationOwner::CityLife);
+        if (resident.DuelStagingSlotId != 0)
+            PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
+
+        PlayerbotsLife::BeginRelease(resident.Token);
         Player* player = FindPlayer(resident.Bot.GuidLow);
-        if (!player || !player->GetSession())
-            return;
-
-        Activities::CrowdClearAfk(player);
-        Movement::DismountIfMounted(player);
-        ClearCityStrategies(player);
-
-        if (sRandomPlayerbotMgr.IsRandomBot(player))
-            sRandomPlayerbotMgr.ScheduleTeleport(resident.Bot.GuidLow);
-
-        if (returnHome && !player->IsBeingTeleported() && !player->IsInCombat())
+        if (player && player->GetSession())
         {
-            Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX, resident.OriginalY,
-                resident.OriginalZ, resident.OriginalO, true);
+            Activities::CrowdClearAfk(player);
+            Movement::DismountIfMounted(player);
+            ClearCityStrategies(player);
+
+            if (sRandomPlayerbotMgr.IsRandomBot(player))
+                sRandomPlayerbotMgr.ScheduleTeleport(resident.Bot.GuidLow);
+
+            if (returnHome && !player->IsBeingTeleported() && !player->IsInCombat())
+            {
+                Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX, resident.OriginalY,
+                    resident.OriginalZ, resident.OriginalO, true);
+            }
         }
+        PlayerbotsLife::ReleaseLease(resident.Token);
+        PlayerbotsLife::Release(resident.Bot.GuidLow, PlayerbotsLife::ReservationOwner::CityLife);
     }
 
     void Manager::ReleaseAll(bool returnHome)
@@ -1247,6 +1292,11 @@ namespace CityLife
         for (Resident const& resident : _residents)
             ReleaseResident(resident, returnHome && _returnBots);
         _residents.clear();
+    }
+
+    void Manager::Shutdown()
+    {
+        ReleaseAll(true);
     }
 
     void Manager::RemoveUnavailableResidents()

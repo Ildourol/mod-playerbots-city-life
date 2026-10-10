@@ -8,6 +8,7 @@
 #define CITY_LIFE_TYPES_H
 
 #include "Define.h"
+#include "LifeBotReservation.h"
 
 #include <string>
 #include <vector>
@@ -208,6 +209,10 @@ namespace CityLife
 
         // Alternating District Roam State
         bool LastRoamWasHub = false;
+
+        // Tokenized Cooperation Lease
+        PlayerbotsLife::LeaseToken Token;
+        uint32 DuelStagingSlotId = 0;
     };
 }
 
