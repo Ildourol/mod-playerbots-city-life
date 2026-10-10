@@ -28,14 +28,15 @@ CityLife.TickSeconds = 10
 CityLife.Population.BudgetMode = "percentage"
 
 # Fixed population target when BudgetMode is set to "count".
-# Tuned conservatively (150) so running alongside mod-playerbots-pvp-life does not starve the server.
-CityLife.Population.FixedCount = 150
+# Tuned to 120 (12% of a standard 1,000 active bot server) to guarantee healthy open-world roaming.
+CityLife.Population.FixedCount = 120
 
 # Percentage of the online eligible pool to borrow when BudgetMode is set to "percentage".
-# Tuned to 12% to ensure ample unreserved bots remain free in the open world when both modules run.
+# Tuned to 12% (yielding ~120 bots on a 1,000-bot server) to ensure ample unreserved bots remain free in the open world.
 CityLife.Population.BorrowPercent = 12
 
 # Hard global ceiling across all hubs combined.
+# Set to 150 to allow generous burst headroom when real players enter capitals.
 CityLife.Population.MaxTotal = 150
 
 # Demand Mode:
@@ -50,13 +51,14 @@ CityLife.Population.DemandMode = "hybrid"
 CityLife.Population.Distribution = "scaled"
 
 # Minimum population baseline percentage retained in unattended hubs under "hybrid" mode.
-CityLife.Population.BaselinePercent = 20
+# Set to 25% so unoccupied cities remain gently inhabited without wasting pool capacity.
+CityLife.Population.BaselinePercent = 25
 
 # Grace period (in seconds) before scaling down a hub after the last real player leaves.
 CityLife.Population.BurstGraceSeconds = 180
 
 # Maximum number of bot borrows or releases executed per tick to prevent CPU spikes.
-CityLife.Population.MaxChangesPerTick = 3
+CityLife.Population.MaxChangesPerTick = 4
 
 ###################################################################################################
 # Compatibility & Coexistence with mod-playerbots-pvp-life
@@ -87,7 +89,8 @@ CityLife.Bots.AccountMin = 0
 CityLife.Bots.AccountMax = 0
 
 # Maximum number of online bot candidates evaluated per hub reconciliation.
-CityLife.Bots.QueryLimit = 500
+# Tuned to 1000 so the entire pool is visible across all random spread level brackets.
+CityLife.Bots.QueryLimit = 1000
 
 # Exclude bots that are currently in a player or bot group.
 CityLife.Bots.SkipGrouped = 1
@@ -251,60 +254,69 @@ CityLife.Achievements.BlockAchievements = 1
 ###################################################################################################
 
 CityLife.Hub.Stormwind.Enable = 1
-CityLife.Hub.Stormwind.Population = 76
-CityLife.Hub.Stormwind.Min = 8
+CityLife.Hub.Stormwind.Population = 45
+CityLife.Hub.Stormwind.Min = 6
 
 CityLife.Hub.Orgrimmar.Enable = 1
-CityLife.Hub.Orgrimmar.Population = 75
-CityLife.Hub.Orgrimmar.Min = 8
+CityLife.Hub.Orgrimmar.Population = 45
+CityLife.Hub.Orgrimmar.Min = 6
 
 CityLife.Hub.Ironforge.Enable = 1
-CityLife.Hub.Ironforge.Population = 25
+CityLife.Hub.Ironforge.Population = 18
 CityLife.Hub.Ironforge.Min = 3
 
 CityLife.Hub.Undercity.Enable = 1
-CityLife.Hub.Undercity.Population = 25
+CityLife.Hub.Undercity.Population = 18
 CityLife.Hub.Undercity.Min = 3
 
 CityLife.Hub.Darnassus.Enable = 1
-CityLife.Hub.Darnassus.Population = 20
+CityLife.Hub.Darnassus.Population = 12
 CityLife.Hub.Darnassus.Min = 2
 
 CityLife.Hub.ThunderBluff.Enable = 1
-CityLife.Hub.ThunderBluff.Population = 20
+CityLife.Hub.ThunderBluff.Population = 12
 CityLife.Hub.ThunderBluff.Min = 2
 
 CityLife.Hub.Exodar.Enable = 1
-CityLife.Hub.Exodar.Population = 10
+CityLife.Hub.Exodar.Population = 8
 CityLife.Hub.Exodar.Min = 2
 
 CityLife.Hub.Silvermoon.Enable = 1
-CityLife.Hub.Silvermoon.Population = 20
+CityLife.Hub.Silvermoon.Population = 15
 CityLife.Hub.Silvermoon.Min = 2
 
+# Outland & Northrend capitals (level 58-80 brackets)
 CityLife.Hub.Shattrath.Enable = 1
-CityLife.Hub.Shattrath.Population = 20
+CityLife.Hub.Shattrath.Population = 16
+CityLife.Hub.Shattrath.Min = 3
 
 CityLife.Hub.Dalaran.Enable = 1
-CityLife.Hub.Dalaran.Population = 30
+CityLife.Hub.Dalaran.Population = 22
+CityLife.Hub.Dalaran.Min = 4
 
+# Lowbie hub (level 1-20 bracket)
 CityLife.Hub.Goldshire.Enable = 1
-CityLife.Hub.Goldshire.Population = 35
-CityLife.Hub.Goldshire.Min = 8
+CityLife.Hub.Goldshire.Population = 14
+CityLife.Hub.Goldshire.Min = 3
 
+# Capital gate duel ritual grounds
 CityLife.Hub.StormwindGate.Enable = 1
-CityLife.Hub.StormwindGate.Population = 22
+CityLife.Hub.StormwindGate.Population = 12
+CityLife.Hub.StormwindGate.Min = 2
 
 CityLife.Hub.OrgrimmarGate.Enable = 1
-CityLife.Hub.OrgrimmarGate.Population = 22
+CityLife.Hub.OrgrimmarGate.Population = 12
+CityLife.Hub.OrgrimmarGate.Min = 2
 
-# Maintains 40 bots per faction in the Wintergrasp starting camps (ignoring time multipliers).
+# Wintergrasp starting camps (level 75-80 bracket, balanced so high-level bots are not monopolized)
 CityLife.Hub.WintergraspAlliance.Enable = 1
-CityLife.Hub.WintergraspAlliance.Population = 40
+CityLife.Hub.WintergraspAlliance.Population = 15
+CityLife.Hub.WintergraspAlliance.Min = 3
 CityLife.Hub.WintergraspAlliance.TimeScaling = 0
 CityLife.Hub.WintergraspAlliance.ResidenceSeconds = 10800
 
 CityLife.Hub.WintergraspHorde.Enable = 1
-CityLife.Hub.WintergraspHorde.Population = 40
+CityLife.Hub.WintergraspHorde.Population = 15
+CityLife.Hub.WintergraspHorde.Min = 3
 CityLife.Hub.WintergraspHorde.TimeScaling = 0
 CityLife.Hub.WintergraspHorde.ResidenceSeconds = 10800

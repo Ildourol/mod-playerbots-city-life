@@ -189,7 +189,7 @@ namespace CityLife
         // Population Budget & Demand
         std::string budgetModeStr = Lower(sConfigMgr->GetOption<std::string>("CityLife.Population.BudgetMode", "percentage"));
         _budgetMode = (budgetModeStr == "count") ? BudgetMode::Count : BudgetMode::Percentage;
-        _fixedCount = sConfigMgr->GetOption<uint32>("CityLife.Population.FixedCount", 150);
+        _fixedCount = sConfigMgr->GetOption<uint32>("CityLife.Population.FixedCount", 120);
         _borrowPercent = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.BorrowPercent", 12), 1, 100);
         _maxTotalPopulation = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.MaxTotal", 150), 1, 2000);
 
@@ -203,9 +203,9 @@ namespace CityLife
 
         std::string distStr = Lower(sConfigMgr->GetOption<std::string>("CityLife.Population.Distribution", "scaled"));
         _distributionMode = (distStr == "legacy") ? DistributionMode::Legacy : DistributionMode::Scaled;
-        _baselinePercent = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.BaselinePercent", 20), 0, 100);
+        _baselinePercent = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.BaselinePercent", 25), 0, 100);
         _burstGraceSeconds = sConfigMgr->GetOption<uint32>("CityLife.Population.BurstGraceSeconds", 180);
-        _maxChangesPerTick = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.MaxChangesPerTick", 3), 1, 50);
+        _maxChangesPerTick = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.MaxChangesPerTick", 4), 1, 50);
 
         // Compatibility & Anti-Stealing Barrier
         _compatPvPLifeHarmony = sConfigMgr->GetOption<bool>("CityLife.Compatibility.PvPLife.EnableHarmony", true);
@@ -216,7 +216,7 @@ namespace CityLife
         _botAccountPrefix = sConfigMgr->GetOption<std::string>("CityLife.Bots.AccountPrefix", "auto");
         _botAccountMin = sConfigMgr->GetOption<uint32>("CityLife.Bots.AccountMin", 0);
         _botAccountMax = sConfigMgr->GetOption<uint32>("CityLife.Bots.AccountMax", 0);
-        _botQueryLimit = std::max<uint32>(50, sConfigMgr->GetOption<uint32>("CityLife.Bots.QueryLimit", 500));
+        _botQueryLimit = std::max<uint32>(50, sConfigMgr->GetOption<uint32>("CityLife.Bots.QueryLimit", 1000));
         _skipGroupedBots = sConfigMgr->GetOption<bool>("CityLife.Bots.SkipGrouped", true);
         _respectPlayerbotActivity = sConfigMgr->GetOption<bool>("CityLife.Bots.RespectPlayerbotActivity", false);
         _returnBots = sConfigMgr->GetOption<bool>("CityLife.Bots.ReturnWhenReleased", true);
