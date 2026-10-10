@@ -1,5 +1,7 @@
 # City Life (Comprehensive Autonomous Urban Population & Roleplay)
 
+![City Life Banner](assets/banner.png)
+
 Repository/module name: `mod-playerbots-city-life`  
 Created by **iCore**. Incorporates 100% of capabilities and micro-behaviors from `mod-city-bots`.
 
