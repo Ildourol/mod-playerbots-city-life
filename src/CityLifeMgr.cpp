@@ -8,6 +8,9 @@
 #include "CityLifeActivities.h"
 #include "CityLifeDialogues.h"
 #include "CityLifeMovement.h"
+#include "CityLifePopulation.h"
+#include "Item.h"
+#include "StringFormat.h"
 #include "LifeBotReservation.h"
 
 #include "AreaDefines.h"
@@ -176,6 +179,8 @@ namespace CityLife
 
     void Manager::LoadConfig()
     {
+        CancelAdmissions();
+        ++_dataGeneration;
         bool wasEnabled = _enable;
         bool enabled = sConfigMgr->GetOption<bool>("CityLife.Enable", true);
         if (wasEnabled && !enabled && !_residents.empty())
@@ -282,7 +287,7 @@ namespace CityLife
         _activitiesAfkEnable = sConfigMgr->GetOption<bool>("CityLife.Activities.AFK.Enable", true);
 
         // Living Crowd Scenes
-        _crowdEnable = sConfigMgr->GetOption<bool>("CityLife.Crowd.Enable", false);
+        _crowdEnable = sConfigMgr->GetOption<bool>("CityLife.Crowd.Enable", true);
         _crowdPlayerRadius = sConfigMgr->GetOption<float>("CityLife.Crowd.PlayerRadius", 60.0f);
         _crowdChatCooldownSec = sConfigMgr->GetOption<uint32>("CityLife.Crowd.ChatCooldownSec", 90);
         _crowdAfkMinSec = sConfigMgr->GetOption<uint32>("CityLife.Crowd.AfkMinSec", 60);
@@ -320,6 +325,7 @@ namespace CityLife
         CheckCoexistence();
 
         _botAccountCache.clear();
+        RefreshAccountCache();
         _startupElapsedMs = 0;
         _timerMs = 0;
 
@@ -381,6 +387,7 @@ namespace CityLife
 
     bool Manager::LoadData()
     {
+        CancelAdmissions();
         std::vector<Hub> hubs;
         QueryResult hubResult = WorldDatabase.Query(
             "SELECT id,name,enabled,team,min_level,max_level,map_id,default_population,priority "
@@ -536,30 +543,52 @@ namespace CityLife
         return ObjectAccessor::FindPlayer(guid);
     }
 
+    void Manager::RefreshAccountCache()
+    {
+        std::string prefix = Lower(_botAccountPrefix);
+        LoginDatabase.EscapeString(prefix);
+        std::string sql = Acore::StringFormat(
+            "SELECT id,username FROM account WHERE ({} > 0 AND id BETWEEN {} AND {}) OR "
+            "({} > 0 AND LEFT(LOWER(username),{})='{}')",
+            _botAccountMax, _botAccountMin, _botAccountMax, _botAccountPrefix.size(), _botAccountPrefix.size(), prefix);
+        uint64 generation = _dataGeneration;
+        _queryProcessor.AddCallback(LoginDatabase.AsyncQuery(sql).WithCallback([this, generation](QueryResult result)
+        {
+            if (generation != _dataGeneration || !result)
+                return;
+            do
+            {
+                uint32 id = result->Fetch()[0].Get<uint32>();
+                bool range = _botAccountMax > 0 && id >= _botAccountMin && id <= _botAccountMax;
+                bool prefixMatch = !_botAccountPrefix.empty() &&
+                    Lower(result->Fetch()[1].Get<std::string>()).rfind(Lower(_botAccountPrefix), 0) == 0;
+                _botAccountCache[id] = range || prefixMatch;
+            } while (result->NextRow());
+        }));
+    }
+
     bool Manager::IsConfiguredBotAccount(uint32 accountId)
     {
-        if (!accountId)
-            return false;
         auto cached = _botAccountCache.find(accountId);
         if (cached != _botAccountCache.end())
             return cached->second;
-
-        bool rangeOk = _botAccountMax > 0 && _botAccountMax >= _botAccountMin &&
+        bool range = accountId && _botAccountMax > 0 && _botAccountMax >= _botAccountMin &&
             accountId >= _botAccountMin && accountId <= _botAccountMax;
-        bool prefixOk = false;
-        if (!_botAccountPrefix.empty())
-        {
-            QueryResult result = LoginDatabase.Query("SELECT username FROM account WHERE id={} LIMIT 1", accountId);
-            if (result)
-            {
-                std::string username = Lower(result->Fetch()[0].Get<std::string>());
-                prefixOk = username.rfind(Lower(_botAccountPrefix), 0) == 0;
-            }
-        }
+        return range;
+    }
 
-        bool accepted = rangeOk || prefixOk;
-        _botAccountCache[accountId] = accepted;
-        return accepted;
+    bool Manager::IsHumanControlled(Player* player) const
+    {
+        if (!player || !player->GetSession())
+            return true;
+        PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
+        if (!ai || ::IsRealPlayer(player) || ::IsSelfBot(player) || ai->HasGameClientMaster())
+            return true;
+        if (Group* group = player->GetGroup())
+            for (GroupReference const* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource(); member && (::IsRealPlayer(member) || ::IsSelfBot(member)))
+                    return true;
+        return false;
     }
 
     bool Manager::IsCandidate(Player* player)
@@ -569,11 +598,11 @@ namespace CityLife
         if (!sRandomPlayerbotMgr.IsRandomBot(player) &&
             !IsConfiguredBotAccount(player->GetSession()->GetAccountId()))
             return false;
-        if (_compatPvPLifeRespectReservations && PlayerbotsLife::IsReserved(player->GetGUID().GetCounter()))
+        if (PlayerbotsLife::IsReserved(player->GetGUID().GetCounter()))
             return false;
 
         PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
-        if (!ai || ::IsRealPlayer(player) || ai->HasGameClientMaster())
+        if (IsHumanControlled(player))
             return false;
         if (_respectPlayerbotActivity && !ai->AllowActivity(ALL_ACTIVITY))
             return false;
@@ -596,7 +625,7 @@ namespace CityLife
             !const_cast<Manager*>(this)->IsConfiguredBotAccount(player->GetSession()->GetAccountId()))
             return false;
         PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
-        if (!ai || ::IsRealPlayer(player) || ai->HasGameClientMaster())
+        if (!ai || ::IsRealPlayer(player) || ::IsSelfBot(player) || ai->HasGameClientMaster())
             return false;
         if (!player->IsAlive() || player->IsInFlight())
             return false;
@@ -606,6 +635,10 @@ namespace CityLife
             return false;
         if (player->GetMap() && player->GetMap()->Instanceable())
             return false;
+        if (Group* group = player->GetGroup())
+            for (GroupReference const* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource(); member && (::IsRealPlayer(member) || ::IsSelfBot(member)))
+                    return false;
         if (_skipGroupedBots && player->GetGroup())
             return false;
         return true;
@@ -637,8 +670,8 @@ namespace CityLife
                     continue;
                 }
 
-                PlayerbotAI* ai = GET_PLAYERBOT_AI(p);
-                if (!ai || ai->HasGameClientMaster() || !p->IsAlive())
+                if (IsHumanControlled(p) || !p->IsAlive() || p->InBattleground() || p->InBattlegroundQueue() ||
+                    (p->GetMap() && p->GetMap()->Instanceable()))
                     continue;
 
                 if (sRandomPlayerbotMgr.IsRandomBot(p))
@@ -683,12 +716,6 @@ namespace CityLife
 
         if (it != _residents.end())
         {
-            Player* player = FindPlayer(guidLow);
-            if (player)
-            {
-                Activities::CrowdClearAfk(player);
-                Activities::CrowdReleaseChat(player, *it);
-            }
             ReleaseResident(*it, false); // Do not return-teleport away from group or master
             _residents.erase(it);
 
@@ -723,8 +750,11 @@ namespace CityLife
         }
 
         // 2. Demand-driven early exit target
-        uint32 currentCount = CountResidents(hub.Id);
-        uint32 targetPop = TargetPopulation(hub);
+        uint32 currentCount = CountResidents(hub.Id) + static_cast<uint32>(std::count_if(
+            _pendingAdmissions.begin(), _pendingAdmissions.end(),
+            [&](PendingAdmission const& pending) { return pending.HubId == hub.Id; }));
+        auto target = _hubTargets.find(hub.Id);
+        uint32 targetPop = target == _hubTargets.end() ? TargetPopulation(hub) : target->second;
         uint32 deficit = (targetPop > currentCount) ? (targetPop - currentCount) : 1;
         uint32 candidateTarget = std::min<uint32>(dynamicCeiling, std::max<uint32>(20, deficit * 5));
 
@@ -862,12 +892,41 @@ namespace CityLife
         uint64 bestScore = std::numeric_limits<uint64>::max();
         bool hasAlternative = hub.Spots.size() > 1;
 
+        Spot const* currentSpot = nullptr;
+        if (ignoredSpotId != 0)
+        {
+            for (Spot const& s : hub.Spots)
+            {
+                if (s.Id == ignoredSpotId)
+                {
+                    currentSpot = &s;
+                    break;
+                }
+            }
+        }
+
+        auto passesInnFilter = [&](Spot const& spot)
+        {
+            if (!currentSpot)
+                return true;
+            bool currentIsInInn = (currentSpot->Category == "inn" || currentSpot->PoiType == CityPoiType::Tavern);
+            bool candIsInInn = (spot.Category == "inn" || spot.PoiType == CityPoiType::Tavern);
+            if (currentIsInInn && !candIsInInn && !_actLeaveInn)
+                return false;
+            if (!currentIsInInn && candIsInInn && !_actReturnToInn)
+                return false;
+            return true;
+        };
+
         std::vector<Spot const*> candidateList;
         if (filterByDistrict)
         {
             for (Spot const& spot : hub.Spots)
             {
                 if (hasAlternative && spot.Id == ignoredSpotId)
+                    continue;
+
+                if (!passesInnFilter(spot))
                     continue;
 
                 bool isHub = IsHubDistrict(hub.Name, spot.District);
@@ -882,6 +941,10 @@ namespace CityLife
             {
                 if (hasAlternative && spot.Id == ignoredSpotId)
                     continue;
+
+                if (!passesInnFilter(spot))
+                    continue;
+
                 candidateList.push_back(&spot);
             }
         }
@@ -954,7 +1017,22 @@ namespace CityLife
         }
 
         if (spot.PoiType == CityPoiType::Dock && _actFishing)
-            return CitizenRole::Fisher;
+        {
+            Player* p = FindPlayer(candidate.GuidLow);
+            Item* pole = p ? p->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND) : nullptr;
+            if (p && p->GetSkillValue(SKILL_FISHING) > 0 && pole &&
+                pole->GetTemplate()->Class == ITEM_CLASS_WEAPON &&
+                pole->GetTemplate()->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE)
+            {
+                Item* mainItem = p->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+                if (mainItem && mainItem->GetTemplate() &&
+                    mainItem->GetTemplate()->Class == ITEM_CLASS_WEAPON &&
+                    mainItem->GetTemplate()->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE)
+                {
+                    return CitizenRole::Fisher;
+                }
+            }
+        }
 
         if (Lower(hub.Name) == "goldshire" && spot.Category == "inn" && _actInnDancing)
             return CitizenRole::InnDancer;
@@ -991,6 +1069,10 @@ namespace CityLife
         switch (spot.PoiType)
         {
             case CityPoiType::Tavern:
+                if (_actTavernSitting && _actTavernDrinking)
+                    return roll_chance_i(50) ? CitizenActivity::DrinkInTavern : CitizenActivity::SitInTavern;
+                if (_actTavernDrinking)
+                    return CitizenActivity::DrinkInTavern;
                 return _actTavernSitting ? CitizenActivity::SitInTavern : CitizenActivity::Idle;
             case CityPoiType::AuctionHouse:
                 return _actAuctionHouse ? CitizenActivity::VisitAuctionHouse : CitizenActivity::Idle;
@@ -1216,6 +1298,9 @@ namespace CityLife
             if (r.Bot.GuidLow == guidLow)
                 return &r;
         }
+        for (ReleasingResident& pending : _releasingResidents)
+            if (pending.Actor.Bot.GuidLow == guidLow)
+                return &pending.Actor;
         return nullptr;
     }
 
@@ -1233,7 +1318,8 @@ namespace CityLife
                 GameTimeMS() >= r.DuelCooldownUntilMs)
             {
                 Player* opponent = FindPlayer(r.Bot.GuidLow);
-                if (!opponent || !opponent->IsInWorld() || opponent->duel || opponent->IsInCombat())
+                if (!opponent || !opponent->IsInWorld() || opponent->duel || opponent->IsInCombat() ||
+                    !PlayerbotsLife::ValidateActiveLease(r.Token) || !IsResidentUsable(opponent, true))
                     continue;
 
                 if (opponent->GetDistance2d(centerX, centerY) > radius)
@@ -1298,115 +1384,168 @@ namespace CityLife
 
     bool Manager::AddResident(Hub const& hub, uint32 poolCount)
     {
-        Spot const* spot = ChooseSpot(hub);
-        if (!spot)
+        if (std::any_of(_pendingAdmissions.begin(), _pendingAdmissions.end(),
+            [&](PendingAdmission const& pending) { return pending.HubId == hub.Id; }))
             return false;
         std::vector<BotCandidate> candidates = LoadCandidates(hub, poolCount);
         if (candidates.empty())
             return false;
+        uint32 now = GameTimeSeconds();
+        PendingAdmission pending;
+        pending.HubId = hub.Id;
+        pending.Bot = candidates.front();
+        pending.Deadline = now + std::max<uint32>(30, _tickSeconds * 3);
+        pending.RequestId = PlayerbotsLife::SubmitAdmissionRequest(PlayerbotsLife::ReservationOwner::CityLife,
+            ++_nextAssignmentId, { pending.Bot.GuidLow }, CalculateTotalBudget(poolCount), now, pending.Deadline);
+        if (!pending.RequestId)
+            return false;
+        _pendingAdmissions.push_back(pending);
+        return true;
+    }
 
-        for (BotCandidate const& bot : candidates)
+    bool Manager::AdmitResident(Hub const& hub, BotCandidate const& bot, PlayerbotsLife::LeaseToken token)
+    {
+        Player* player = FindPlayer(bot.GuidLow);
+        Spot const* spot = ChooseSpot(hub);
+        if (!hub.Enabled || !spot || !IsResidentUsable(player) || player->IsInCombat() ||
+            player->IsBeingTeleported() || token.GuidLow != bot.GuidLow ||
+            token.Owner != PlayerbotsLife::ReservationOwner::CityLife ||
+            !PlayerbotsLife::ValidateLeaseState(token, PlayerbotsLife::LeaseState::Provisional) ||
+            !PlayerbotsLife::PromoteLease(token))
+            return false;
+        Resident resident;
+        resident.Bot = bot;
+        resident.Token = token;
+        resident.OriginalMap = player->GetMapId();
+        resident.OriginalX = player->GetPositionX();
+        resident.OriginalY = player->GetPositionY();
+        resident.OriginalZ = player->GetPositionZ();
+        resident.OriginalO = player->GetOrientation();
+        AssignSpot(resident, hub, *spot, true);
+        uint32 now = GameTimeSeconds();
+        resident.NextMoveAt = now + urand(_relocateMinSeconds, _relocateMaxSeconds);
+        resident.NextEmoteAtMs = GameTimeMS() + urand(_emoteMinSeconds, _emoteMaxSeconds) * 1000;
+        resident.NextReservationRefreshAt = now + ReservationRefreshSeconds;
+        resident.ReleaseAt = hub.ResidenceSeconds == 0 ? 0 : now + hub.ResidenceSeconds;
+        resident.LastSweepZ = resident.TargetZ;
+        ApplyCityStrategies(player, resident);
+        SetStayPosition(player, resident);
+        if (sRandomPlayerbotMgr.IsRandomBot(player))
+            sRandomPlayerbotMgr.ScheduleTeleport(bot.GuidLow, std::max(ReservationSeconds, hub.ResidenceSeconds + MINUTE));
+        Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, true);
+        _residents.push_back(resident);
+        ++_changesThisTick;
+        return true;
+    }
+
+    void Manager::CancelAdmissions()
+    {
+        PlayerbotsLife::CancelAdmissionRequest(0, PlayerbotsLife::ReservationOwner::CityLife);
+        for (PendingAdmission const& pending : _pendingAdmissions)
+            PlayerbotsLife::ReleaseLeaseExact(pending.Token);
+        _pendingAdmissions.clear();
+    }
+
+    void Manager::ProcessAdmissionGrants()
+    {
+        uint32 now = GameTimeSeconds();
+        auto pending = _pendingAdmissions.begin();
+        while (pending != _pendingAdmissions.end())
         {
-            Player* player = FindPlayer(bot.GuidLow);
-            if (!IsCandidate(player))
+            Hub* hub = FindHub(pending->HubId);
+            auto target = _hubTargets.find(pending->HubId);
+            if (!hub || !hub->Enabled || pending->Deadline <= now ||
+                target == _hubTargets.end() || CountResidents(pending->HubId) >= target->second)
+            {
+                PlayerbotsLife::CancelAdmissionRequest(pending->RequestId, PlayerbotsLife::ReservationOwner::CityLife);
+                PlayerbotsLife::ReleaseLeaseExact(pending->Token);
+                pending = _pendingAdmissions.erase(pending);
                 continue;
-
-            PlayerbotsLife::LeaseToken token;
-            if (!PlayerbotsLife::TryAcquireLease(token, bot.GuidLow, PlayerbotsLife::ReservationOwner::CityLife,
-                                                 hub.Id, PlayerbotsLife::LeaseState::Active))
+            }
+            if (!pending->Token.Generation)
+            {
+                std::vector<PlayerbotsLife::LeaseToken> tokens;
+                if (!PlayerbotsLife::TakeAdmissionGrant(pending->RequestId, PlayerbotsLife::ReservationOwner::CityLife, tokens))
+                {
+                    ++pending;
+                    continue;
+                }
+                if (tokens.size() != 1)
+                {
+                    for (auto const& token : tokens)
+                        PlayerbotsLife::ReleaseLeaseExact(token);
+                    pending = _pendingAdmissions.erase(pending);
+                    continue;
+                }
+                pending->Token = tokens.front();
+            }
+            if (_changesThisTick >= _maxChangesPerTick)
+            {
+                ++pending;
                 continue;
-
-            Resident resident;
-            resident.Bot = bot;
-            resident.Token = token;
-            resident.OriginalMap = player->GetMapId();
-            resident.OriginalX = player->GetPositionX();
-            resident.OriginalY = player->GetPositionY();
-            resident.OriginalZ = player->GetPositionZ();
-            resident.OriginalO = player->GetOrientation();
-            AssignSpot(resident, hub, *spot, true);
-
-            uint32 now = GameTimeSeconds();
-            resident.NextMoveAt = now + urand(_relocateMinSeconds, _relocateMaxSeconds);
-            resident.NextEmoteAtMs = GameTimeMS() + urand(_emoteMinSeconds, _emoteMaxSeconds) * 1000;
-            resident.NextReservationRefreshAt = now + ReservationRefreshSeconds;
-            resident.ReleaseAt = hub.ResidenceSeconds == 0 ? 0 : now + hub.ResidenceSeconds;
-            resident.LastSweepZ = resident.TargetZ;
-
-            ApplyCityStrategies(player, resident);
-            SetStayPosition(player, resident);
-            if (sRandomPlayerbotMgr.IsRandomBot(player))
-                sRandomPlayerbotMgr.ScheduleTeleport(bot.GuidLow,
-                    std::max(ReservationSeconds, hub.ResidenceSeconds + MINUTE));
-
-            Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, true);
-            _residents.push_back(resident);
-
-            if (_debug)
-                LOG_INFO("module", "[CityLife] Added resident {} (lvl {}, role {}) to {}/{}",
-                    bot.Name, bot.Level, static_cast<uint32>(resident.Role), hub.Name, spot->Name);
-            return true;
+            }
+            uint32 budget = CalculateTotalBudget(GetLiveWorldBotCount());
+            if (PlayerbotsLife::GetCooperationSnapshot().CityLifeCount > budget ||
+                !AdmitResident(*hub, pending->Bot, pending->Token))
+                PlayerbotsLife::ReleaseLeaseExact(pending->Token);
+            pending = _pendingAdmissions.erase(pending);
         }
-        return false;
     }
 
     void Manager::ReleaseResident(Resident const& resident, bool returnHome)
     {
-        if (resident.DuelStagingSlotId != 0)
-            PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
+        if (!PlayerbotsLife::BeginRelease(resident.Token))
+            return;
+        if (std::none_of(_releasingResidents.begin(), _releasingResidents.end(),
+            [&](ReleasingResident const& pending) { return pending.Actor.Token.Generation == resident.Token.Generation; }))
+            _releasingResidents.push_back({ resident, returnHome });
+    }
 
-        if (resident.DuelPairId != 0)
-            PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident.DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
-
-        PlayerbotsLife::BeginRelease(resident.Token);
-        Player* player = FindPlayer(resident.Bot.GuidLow);
-        if (player && player->GetSession())
+    void Manager::ProcessReleasingResidents()
+    {
+        auto pending = _releasingResidents.begin();
+        while (pending != _releasingResidents.end())
         {
-            PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
-            bool isPlayerControlled = ai && (ai->HasGameClientMaster() || ::IsRealPlayer(player));
-            if (!isPlayerControlled && player->GetGroup())
+            Resident& resident = pending->Actor;
+            bool owned = PlayerbotsLife::ValidateLeaseState(resident.Token, PlayerbotsLife::LeaseState::Releasing);
+            Player* player = owned ? FindPlayer(resident.Bot.GuidLow) : nullptr;
+            bool relinquish = !owned || !player || IsHumanControlled(player);
+            if (!relinquish)
             {
-                for (GroupReference const* ref = player->GetGroup()->GetFirstMember(); ref != nullptr; ref = ref->next())
+                if (!player->IsInWorld() || player->IsBeingTeleported() || _changesThisTick >= _maxChangesPerTick)
                 {
-                    if (ref->GetSource() && ::IsRealPlayer(ref->GetSource()))
-                    {
-                        isPlayerControlled = true;
-                        break;
-                    }
+                    ++pending;
+                    continue;
                 }
-            }
-
-            if (!isPlayerControlled)
-            {
+                Activities::CancelCityDuel(player, "residence-ended");
+                if (player->IsInCombat())
+                {
+                    ++pending;
+                    continue;
+                }
                 Activities::CrowdClearAfk(player);
-                Movement::DismountIfMounted(player);
+                Activities::CrowdReleaseChat(player, resident);
                 RestoreResidentState(player, resident);
-
                 if (sRandomPlayerbotMgr.IsRandomBot(player))
                     sRandomPlayerbotMgr.ScheduleTeleport(resident.Bot.GuidLow);
-
-                if (returnHome && !player->IsBeingTeleported() && !player->IsInCombat())
-                {
-                    Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX, resident.OriginalY,
-                        resident.OriginalZ, resident.OriginalO, true);
-                }
+                if (pending->ReturnHome && player->IsAlive())
+                    Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX,
+                        resident.OriginalY, resident.OriginalZ, resident.OriginalO, true);
+                ++_changesThisTick;
             }
-            else
-            {
-                if (ai)
-                {
-                    PositionMap& positions = ai->GetAiObjectContext()->GetValue<PositionMap&>("position")->Get();
-                    PositionInfo stay = positions["stay"];
-                    stay.Reset();
-                    positions["stay"] = stay;
-                }
-            }
+            if (owned)
+                PlayerbotsLife::ReleaseLeaseExact(resident.Token);
+            if (resident.DuelStagingSlotId)
+                PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId, PlayerbotsLife::ReservationOwner::CityLife);
+            if (resident.DuelPairId)
+                PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident.DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
+            pending = _releasingResidents.erase(pending);
         }
-        PlayerbotsLife::ReleaseLease(resident.Token);
     }
 
     void Manager::ReleaseAll(bool returnHome)
     {
+        CancelAdmissions();
         for (Resident const& resident : _residents)
             ReleaseResident(resident, returnHome && _returnBots);
         _residents.clear();
@@ -1414,7 +1553,9 @@ namespace CityLife
 
     void Manager::Shutdown()
     {
+        ++_dataGeneration;
         ReleaseAll(true);
+        ProcessReleasingResidents();
     }
 
     void Manager::RemoveUnavailableResidents()
@@ -1449,84 +1590,25 @@ namespace CityLife
         std::unordered_map<uint32, uint32> targets;
         if (_distributionMode == DistributionMode::Scaled)
         {
-            // Proportional Hub Population Allocation across all active hubs
-            uint32 totalNominal = 0;
+            std::vector<PopulationWeight> weights;
+            uint64 baseWeight = 0;
+            uint64 effectiveWeight = 0;
             for (Hub const& hub : _hubs)
             {
-                if (hub.Enabled && !hub.Spots.empty())
-                    totalNominal += TargetPopulation(hub);
+                targets[hub.Id] = 0;
+                if (!hub.Enabled || hub.Spots.empty())
+                    continue;
+                uint32 demand = TargetPopulation(hub);
+                weights.push_back({ hub.Id, demand, hub.MinCount, hub.Priority });
+                baseWeight += hub.ConfiguredPopulation;
+                effectiveWeight += demand;
             }
-
-            if (totalNominal > 0 && totalBudget > 0)
-            {
-                uint32 allocatedTotal = 0;
-                for (Hub const& hub : _hubs)
-                {
-                    if (!hub.Enabled || hub.Spots.empty())
-                    {
-                        targets[hub.Id] = 0;
-                        continue;
-                    }
-
-                    uint32 nominal = TargetPopulation(hub);
-                    uint32 scaled = static_cast<uint32>(std::lround(
-                        static_cast<double>(nominal * totalBudget) / static_cast<double>(totalNominal)));
-
-                    if (nominal > 0 && hub.MinCount > 0)
-                        scaled = std::max(scaled, hub.MinCount);
-
-                    targets[hub.Id] = scaled;
-                    allocatedTotal += scaled;
-                }
-
-                if (allocatedTotal > totalBudget)
-                {
-                    uint32 excess = allocatedTotal - totalBudget;
-                    for (Hub const& hub : _hubs)
-                    {
-                        if (excess == 0)
-                            break;
-                        uint32& t = targets[hub.Id];
-                        uint32 reducible = (t > hub.MinCount) ? (t - hub.MinCount) : 0;
-                        uint32 cut = std::min(reducible, excess);
-                        t -= cut;
-                        excess -= cut;
-                    }
-
-                    // Hard budget ceiling: If sum of hub.MinCount exceeded totalBudget, shave remaining excess
-                    if (excess > 0)
-                    {
-                        for (Hub const& hub : _hubs)
-                        {
-                            if (excess == 0)
-                                break;
-                            uint32& t = targets[hub.Id];
-                            uint32 cut = std::min(t, excess);
-                            t -= cut;
-                            excess -= cut;
-                        }
-                    }
-                }
-                else if (allocatedTotal < totalBudget)
-                {
-                    uint32 remainingBudget = totalBudget - allocatedTotal;
-                    for (Hub const& hub : _hubs)
-                    {
-                        if (remainingBudget == 0)
-                            break;
-                        if (hub.Enabled && !hub.Spots.empty())
-                        {
-                            targets[hub.Id] += 1;
-                            --remainingBudget;
-                        }
-                    }
-                }
-            }
-            else
-            {
-                for (Hub const& hub : _hubs)
-                    targets[hub.Id] = 0;
-            }
+            double factor = baseWeight ? static_cast<double>(effectiveWeight) / baseWeight : 1.0;
+            uint32 requested = effectiveWeight ? static_cast<uint32>(
+                std::lround(totalBudget * std::min(1.0, factor))) : 0;
+            auto allocation = AllocatePopulation(weights, requested);
+            for (size_t index = 0; index < weights.size(); ++index)
+                targets[weights[index].HubId] = allocation[index];
         }
         else // Legacy sequential allocation
         {
@@ -1539,7 +1621,8 @@ namespace CityLife
             }
         }
 
-        uint32 changes = 0;
+        _hubTargets = targets;
+        uint32 changes = _changesThisTick;
         for (Hub const& hub : _hubs)
         {
             uint32 target = targets[hub.Id];
@@ -1550,7 +1633,7 @@ namespace CityLife
                     {
                         Player* player = FindPlayer(resident.Bot.GuidLow);
                         return resident.HubId == hub.Id && player && !player->IsInCombat() &&
-                            !player->IsBeingTeleported();
+                            !player->IsBeingTeleported() && !player->duel && !resident.DuelMeetingSet;
                     });
                 if (found == _residents.rend())
                     break;
@@ -1558,6 +1641,7 @@ namespace CityLife
                 ReleaseResident(*eraseAt, _returnBots);
                 _residents.erase(eraseAt);
                 ++changes;
+                ++_changesThisTick;
             }
         }
 
@@ -1570,7 +1654,9 @@ namespace CityLife
             for (Hub const& hub : _hubs)
             {
                 uint32 target = targets[hub.Id];
-                uint32 current = CountResidents(hub.Id);
+                uint32 current = CountResidents(hub.Id) + static_cast<uint32>(std::count_if(
+                    _pendingAdmissions.begin(), _pendingAdmissions.end(),
+                    [&](PendingAdmission const& pending) { return pending.HubId == hub.Id; }));
                 if (current >= target || blockedHubs.find(hub.Id) != blockedHubs.end())
                     continue;
 
@@ -1650,9 +1736,13 @@ namespace CityLife
         {
             Hub* hub = FindHub(resident.HubId);
             Player* player = FindPlayer(resident.Bot.GuidLow);
-            if (!hub || !player || player->IsBeingTeleported())
+            if (!hub || !player || player->IsBeingTeleported() ||
+                !PlayerbotsLife::ValidateActiveLease(resident.Token) ||
+                !IsResidentUsable(player, player->duel != nullptr || resident.DuelMeetingSet))
                 continue;
 
+            if ((!_activitiesAfkEnable || !_crowdEnable || !_actCrowdScenes) && resident.AfkSetByModule)
+                Activities::CrowdClearAfk(player);
             // Reservation refresh
             if (resident.NextReservationRefreshAt <= nowSec && sRandomPlayerbotMgr.IsRandomBot(player))
             {
@@ -1664,13 +1754,19 @@ namespace CityLife
             // Tactical Duel Combat & Boundary Maintenance
             if (player->duel && _actDuels)
             {
-                Activities::DriveActiveDuel(resident, player, *hub, nowMs, _duelMaxDistance);
+                Activities::DriveActiveDuel(resident, player, *hub, nowMs, _duelMaxDistance, _duelTacticalRange);
                 continue;
             }
 
             if (player->IsInCombat() || player->duel || player->IsInFlight())
                 continue;
 
+            // Rendezvous owns movement until it closes; stay/roam must not pull actors away.
+            if (resident.DuelMeetingSet && _actDuels)
+            {
+                Activities::ExecuteDuel(resident, player, *hub, nowMs, _duelCooldownSec, _duelMaxDistance, _duelMeetingPoint);
+                continue;
+            }
             // Sink Forensics Check
             Movement::CheckSinkForensics(player, resident.LastSweepZ, _sinkForensics);
             resident.LastSweepZ = player->GetPositionZ();
@@ -1710,8 +1806,26 @@ namespace CityLife
                 resident.AtSpot = false;
             }
 
+            if (resident.AtSpot && resident.ActivityDurationMs &&
+                nowMs - resident.ActivityStartMs >= resident.ActivityDurationMs &&
+                !player->IsNonMeleeSpellCast(false) && !resident.ChatPartnerGuid &&
+                resident.CrowdPhaseState == CrowdPhase::Linger)
+            {
+                if (Spot const* spot = FindSpot(resident.HubId, resident.SpotId))
+                {
+                    if (resident.Sitting)
+                    {
+                        player->SetStandState(UNIT_STAND_STATE_STAND);
+                        resident.Sitting = false;
+                    }
+                    resident.Role = DetermineRole(*hub, *spot, resident.Bot);
+                    resident.Activity = ChooseInitialActivity(resident.Role, *spot);
+                    resident.ActivityStartMs = nowMs;
+                    resident.ActivityDurationMs = urand(45, 180) * 1000;
+                }
+            }
             // Roaming relocation
-            if (_roaming && !resident.Stationary && resident.NextMoveAt <= nowSec)
+            if (_roaming && _actRoaming && !resident.Stationary && resident.NextMoveAt <= nowSec)
             {
                 RelocateResident(resident, *hub);
                 continue;
@@ -1771,7 +1885,7 @@ namespace CityLife
                     break;
                 case CitizenActivity::BuyFood:
                     if (_actFoodVendor)
-                        Activities::ExecuteBuyFood(resident, player, *hub, nowMs, _enableBuyFood);
+                        Activities::ExecuteBuyFood(resident, player, *hub, nowMs, _enableInteractions && _enableBuyFood);
                     break;
                 case CitizenActivity::RandomEmote:
                 default:
@@ -1789,8 +1903,36 @@ namespace CityLife
     {
         if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
         {
-            resident.Journal.OriginalNonCombatStrategies = ai->GetStrategies(BOT_STATE_NON_COMBAT);
+            std::vector<std::string> beforeStrategies = ai->GetStrategies(BOT_STATE_NON_COMBAT);
+            if (!resident.Journal.CapturedOriginalStrategies)
+            {
+                resident.Journal.CapturedOriginalStrategies = true;
+                resident.Journal.OriginalNonCombatStrategies = beforeStrategies;
+            }
+
             ai->ChangeStrategy(_nonCombatStrategies, BOT_STATE_NON_COMBAT);
+
+            std::vector<std::string> afterStrategies = ai->GetStrategies(BOT_STATE_NON_COMBAT);
+
+            // Record actual additions (including native sibling side effects):
+            for (std::string const& s : afterStrategies)
+            {
+                if (std::find(beforeStrategies.begin(), beforeStrategies.end(), s) == beforeStrategies.end())
+                {
+                    if (std::find(resident.Journal.AppliedStrategies.begin(), resident.Journal.AppliedStrategies.end(), s) == resident.Journal.AppliedStrategies.end())
+                        resident.Journal.AppliedStrategies.push_back(s);
+                }
+            }
+
+            // Record actual removals (including native sibling side effects):
+            for (std::string const& s : beforeStrategies)
+            {
+                if (std::find(afterStrategies.begin(), afterStrategies.end(), s) == afterStrategies.end())
+                {
+                    if (std::find(resident.Journal.RemovedStrategies.begin(), resident.Journal.RemovedStrategies.end(), s) == resident.Journal.RemovedStrategies.end())
+                        resident.Journal.RemovedStrategies.push_back(s);
+                }
+            }
         }
     }
 
@@ -1804,11 +1946,16 @@ namespace CityLife
         if (!resident.Journal.ModifiedStayPosition)
         {
             resident.Journal.ModifiedStayPosition = true;
+            resident.Journal.HadStayPosition = stay.isSet();
             resident.Journal.PrevStayX = stay.x;
             resident.Journal.PrevStayY = stay.y;
             resident.Journal.PrevStayZ = stay.z;
             resident.Journal.PrevStayMap = stay.mapId;
         }
+        resident.Journal.AppliedStayX = resident.TargetX;
+        resident.Journal.AppliedStayY = resident.TargetY;
+        resident.Journal.AppliedStayZ = resident.TargetZ;
+        resident.Journal.AppliedStayMap = resident.TargetMap;
         stay.Set(resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetMap);
         positions["stay"] = stay;
     }
@@ -1821,52 +1968,80 @@ namespace CityLife
 
         PositionMap& positions = ai->GetAiObjectContext()->GetValue<PositionMap&>("position")->Get();
         PositionInfo stay = positions["stay"];
-        if (resident.Journal.ModifiedStayPosition)
+        if (resident.Journal.ModifiedStayPosition && stay.isSet() &&
+            stay.x == resident.Journal.AppliedStayX && stay.y == resident.Journal.AppliedStayY &&
+            stay.z == resident.Journal.AppliedStayZ && stay.mapId == resident.Journal.AppliedStayMap)
         {
-            if (resident.Journal.PrevStayX != 0.0f || resident.Journal.PrevStayY != 0.0f)
+            if (resident.Journal.HadStayPosition)
                 stay.Set(resident.Journal.PrevStayX, resident.Journal.PrevStayY, resident.Journal.PrevStayZ, resident.Journal.PrevStayMap);
             else
                 stay.Reset();
             positions["stay"] = stay;
         }
 
-        // Symmetrically restore original strategies if recorded; otherwise fallback to natural non-combat strategies
-        if (!resident.Journal.OriginalNonCombatStrategies.empty())
+        // True delta restoration: revert only mutations made by City Life if current state still matches
+        if (resident.Journal.CapturedOriginalStrategies)
         {
-            ai->ClearStrategies(BOT_STATE_NON_COMBAT);
-            for (std::string const& s : resident.Journal.OriginalNonCombatStrategies)
-                ai->ChangeStrategy("+" + s, BOT_STATE_NON_COMBAT);
-        }
-        else
-        {
-            ai->ChangeStrategy("-stay,+follow,+grind,+rpg,+travel", BOT_STATE_NON_COMBAT);
+            std::vector<std::string> currentStrategies = ai->GetStrategies(BOT_STATE_NON_COMBAT);
+
+            // Revert strategies added by City Life if still active and was NOT originally present
+            for (std::string const& s : resident.Journal.AppliedStrategies)
+            {
+                bool wasOriginal = std::find(resident.Journal.OriginalNonCombatStrategies.begin(),
+                                             resident.Journal.OriginalNonCombatStrategies.end(), s) != resident.Journal.OriginalNonCombatStrategies.end();
+                if (!wasOriginal && std::find(currentStrategies.begin(), currentStrategies.end(), s) != currentStrategies.end())
+                    ai->ChangeStrategy("-" + s, BOT_STATE_NON_COMBAT);
+            }
+
+            // Restore strategies removed by City Life if originally present and not currently active
+            for (std::string const& s : resident.Journal.RemovedStrategies)
+            {
+                bool wasOriginal = std::find(resident.Journal.OriginalNonCombatStrategies.begin(),
+                                             resident.Journal.OriginalNonCombatStrategies.end(), s) != resident.Journal.OriginalNonCombatStrategies.end();
+                if (!wasOriginal || std::find(currentStrategies.begin(), currentStrategies.end(), s) != currentStrategies.end())
+                    continue;
+                auto siblings = ai->GetAiObjectContext()->GetSiblingStrategy(s);
+                auto live = ai->GetStrategies(BOT_STATE_NON_COMBAT);
+                bool newerSibling = std::any_of(live.begin(), live.end(),
+                    [&](std::string const& current) { return siblings.count(current) != 0; });
+                if (!newerSibling)
+                    ai->ChangeStrategy("+" + s, BOT_STATE_NON_COMBAT);
+            }
         }
     }
 
     void Manager::Update(uint32 diff)
     {
+        _queryProcessor.ProcessReadyCallbacks();
+        PlayerbotsLife::ResolveAdmissionRequests(GameTimeSeconds());
+        bool managementTick = _timerMs <= diff;
+        if (managementTick)
+        {
+            _timerMs = _tickSeconds * IN_MILLISECONDS;
+            _changesThisTick = 0;
+        }
+        else
+            _timerMs -= diff;
+        ProcessReleasingResidents();
         if (!_enable || !_databaseReady)
             return;
-
         if (_startupElapsedMs < _startupDelaySeconds * IN_MILLISECONDS)
         {
             _startupElapsedMs += diff;
             return;
         }
-
-        if (_timerMs > diff)
+        if (managementTick)
         {
-            _timerMs -= diff;
-            return;
+            MaintainPopulation();
+            MaintainResidents();
         }
-
-        _timerMs = _tickSeconds * IN_MILLISECONDS;
-        MaintainPopulation();
-        MaintainResidents();
+        ProcessAdmissionGrants(); // Acknowledge five-second grants independently of management ticks.
     }
 
     void Manager::PrintStatus(ChatHandler* handler) const
     {
+        handler->PSendSysMessage("Lifecycle: pendingAdmissions={} releasing={} changesThisTick={}/{}",
+            _pendingAdmissions.size(), _releasingResidents.size(), _changesThisTick, _maxChangesPerTick);
         uint32 startupTarget = _startupDelaySeconds * IN_MILLISECONDS;
         uint32 startupLeft = _startupElapsedMs < startupTarget ?
             (startupTarget - _startupElapsedMs + 999) / 1000 : 0;
@@ -1883,6 +2058,10 @@ namespace CityLife
                 hub.Name, TeamName(hub.Team), hub.MinLevel, hub.MaxLevel, hub.ConfiguredPopulation,
                 TargetPopulation(hub), CountResidents(hub.Id), hub.Spots.size());
         }
+        auto snapshot = PlayerbotsLife::GetCooperationSnapshot();
+        handler->PSendSysMessage("Admissions pending={} shared waiting={} unacknowledged={} ownership={} work used={}/{}",
+            _pendingAdmissions.size(), snapshot.WaitingAdmissions, snapshot.UnacknowledgedGrants,
+            snapshot.CityLifeCount, _changesThisTick, _maxChangesPerTick);
     }
 
     void Manager::PrintDebugStatus(ChatHandler* handler) const

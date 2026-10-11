@@ -162,12 +162,20 @@ namespace CityLife
 
     struct ResidentMutationJournal
     {
+        bool CapturedOriginalStrategies = false;
         std::vector<std::string> OriginalNonCombatStrategies;
+        std::vector<std::string> AppliedStrategies;
+        std::vector<std::string> RemovedStrategies;
         bool ModifiedStayPosition = false;
+        bool HadStayPosition = false;
         float PrevStayX = 0.0f;
         float PrevStayY = 0.0f;
         float PrevStayZ = 0.0f;
         uint32 PrevStayMap = 0;
+        float AppliedStayX = 0.0f;
+        float AppliedStayY = 0.0f;
+        float AppliedStayZ = 0.0f;
+        uint32 AppliedStayMap = 0;
     };
 
     struct Resident
@@ -198,6 +206,7 @@ namespace CityLife
         uint32 ActivityDurationMs = 0;
         bool AtSpot = false;
         bool Sitting = false;
+        bool AfkSetByModule = false;
         uint32 LastSayMs = 0;
 
         // Navigation, Mounting & Sink Forensics
@@ -219,6 +228,7 @@ namespace CityLife
 
         // Paired Duel & Tactical Combat State
         uint64 DuelPairId = 0;
+        uint64 CoreDuelArbiter = 0;
         DuelPairState DuelState = DuelPairState::None;
         uint32 DuelPartnerGuid = 0;
         uint32 DuelStateMs = 0;

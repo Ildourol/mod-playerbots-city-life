@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS `city_life_spot` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Re-applicable seed hubs. Config values override default_population at runtime.
-INSERT INTO `city_life_hub`
+INSERT IGNORE INTO `city_life_hub`
 (`name`,`enabled`,`team`,`min_level`,`max_level`,`map_id`,`default_population`,`priority`)
 VALUES
 ('Stormwind',1,0,1,80,0,25,220),
@@ -54,23 +54,12 @@ VALUES
 ('Gadgetzan',1,2,35,80,1,8,110),
 ('Goldshire',1,0,1,30,0,8,100),
 ('HonorHold',1,0,58,80,530,6,100),
-('Thrallmar',1,1,58,80,530,6,100)
-ON DUPLICATE KEY UPDATE
-`enabled`=VALUES(`enabled`),`team`=VALUES(`team`),`min_level`=VALUES(`min_level`),
-`max_level`=VALUES(`max_level`),`map_id`=VALUES(`map_id`),
-`default_population`=VALUES(`default_population`),`priority`=VALUES(`priority`);
+('Thrallmar',1,1,58,80,530,6,100);
 
--- Replace only the bundled spots. Custom hubs remain untouched.
-DELETE `spot` FROM `city_life_spot` AS `spot`
-INNER JOIN `city_life_hub` AS `hub` ON `hub`.`id`=`spot`.`hub_id`
-WHERE `hub`.`name` IN
-('Stormwind','Orgrimmar','Ironforge','Undercity','Darnassus','ThunderBluff','Exodar','Silvermoon',
- 'Shattrath','Dalaran','WintergraspAlliance','WintergraspHorde','Gadgetzan','Goldshire','HonorHold',
- 'Thrallmar');
-
+-- Insert bundled spots idempotently. Preserves existing custom spots and customized seed values.
 -- Coordinates are based on AzerothCore 3.3.5 game_tele and service NPC/gameobject positions.
 -- Use .citylife spot add in game to tune a point for a different navmesh or custom world database.
-INSERT INTO `city_life_spot`
+INSERT IGNORE INTO `city_life_spot`
 (`hub_id`,`name`,`category`,`enabled`,`x`,`y`,`z`,`o`,`radius`,`weight`)
 SELECT `hub`.`id`,`seed`.`spot_name`,`seed`.`category`,1,`seed`.`x`,`seed`.`y`,`seed`.`z`,`seed`.`o`,
        `seed`.`radius`,`seed`.`weight`

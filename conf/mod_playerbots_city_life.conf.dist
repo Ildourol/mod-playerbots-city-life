@@ -181,7 +181,7 @@ CityLife.Activities.AFK.Enable = 1
 
 # Enable living-crowd scenes at Stormwind Trade District and Orgrimmar Valley of Strength.
 # Set to 0 by default for completely silent out-of-the-box operation; enable as desired.
-CityLife.Crowd.Enable = 0
+CityLife.Crowd.Enable = 1
 
 # Real-player proximity radius (in yards). Crowd logic wakes when a player enters this range.
 CityLife.Crowd.PlayerRadius = 60.0

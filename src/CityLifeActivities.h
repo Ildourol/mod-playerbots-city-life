@@ -38,7 +38,7 @@ namespace CityLife
         bool MoveToRangedDuelDistance(Player* bot, Resident& resident, Player* opponent,
                                       Spot const* anchorSpot, float leashRadius);
         void DriveActiveDuel(Resident& resident, Player* bot, Hub const& hub, uint32 now,
-                             float leashRadius);
+                             float leashRadius, bool tacticalRange);
         void CancelCityDuel(Player* bot, char const* reason);
 
         void ExecuteFishing(Resident& resident, Player* bot, Hub const& hub, uint32 now);
@@ -66,7 +66,6 @@ namespace CityLife
         // Safe State Cleaners
         void CrowdClearAfk(Player* bot);
         void CrowdReleaseChat(Player* bot, Resident& resident);
-        void DuelRestore(Player* bot);
         Player* FindNearbyRealPlayer(Player* bot, float radius);
     }
 }

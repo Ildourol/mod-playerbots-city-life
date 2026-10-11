@@ -8,6 +8,8 @@
 #define CITY_LIFE_MGR_H
 
 #include "CityLifeTypes.h"
+#include "AsyncCallbackProcessor.h"
+#include "QueryCallback.h"
 
 #include <mutex>
 #include <string>
@@ -62,6 +64,8 @@ namespace CityLife
         TeamSide TeamForRace(uint8 race) const;
         Player* FindPlayer(uint32 guidLow) const;
         bool IsConfiguredBotAccount(uint32 accountId);
+        void RefreshAccountCache();
+        bool IsHumanControlled(Player* player) const;
         bool IsCandidate(Player* player);
         bool IsResidentUsable(Player* player, bool allowOwnedDuel = false) const;
         uint32 GetLiveWorldBotCount(bool forceRefresh = false) const;
@@ -84,7 +88,11 @@ namespace CityLife
         uint32 CalculateTotalBudget(uint32 eligiblePoolCount) const;
 
         bool AddResident(Hub const& hub, uint32 poolCount = 0);
+        bool AdmitResident(Hub const& hub, BotCandidate const& bot, PlayerbotsLife::LeaseToken token);
+        void ProcessAdmissionGrants();
+        void CancelAdmissions();
         void ReleaseResident(Resident const& resident, bool returnHome);
+        void ProcessReleasingResidents();
         void ReleaseAll(bool returnHome);
         void RemoveUnavailableResidents();
         void MaintainPopulation();
@@ -217,6 +225,12 @@ namespace CityLife
         bool _waterAvoidance = true;
 
         std::vector<Hub> _hubs;
+        struct ReleasingResident
+        {
+            Resident Actor;
+            bool ReturnHome = false;
+        };
+        std::vector<ReleasingResident> _releasingResidents;
         std::vector<Resident> _residents;
         std::unordered_map<uint32, bool> _botAccountCache;
         mutable std::mutex _hubRealPlayerMutex;
@@ -224,6 +238,20 @@ namespace CityLife
         mutable std::unordered_map<uint32, uint32> _zoneToHubId;           // ZoneId -> HubId (thread-safe lookup)
         mutable uint32 _cachedLiveBotCount = 0;
         mutable uint32 _lastCensusTimeMs = 0;
+        uint64 _nextAssignmentId = 1;
+        QueryCallbackProcessor _queryProcessor;
+        uint64 _dataGeneration = 0;
+        struct PendingAdmission
+        {
+            uint64 RequestId = 0;
+            uint32 HubId = 0;
+            uint32 Deadline = 0;
+            BotCandidate Bot;
+            PlayerbotsLife::LeaseToken Token;
+        };
+        std::vector<PendingAdmission> _pendingAdmissions;
+        std::unordered_map<uint32, uint32> _hubTargets;
+        uint32 _changesThisTick = 0;
     };
 }
 

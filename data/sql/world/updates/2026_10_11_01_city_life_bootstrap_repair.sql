@@ -88,17 +88,12 @@ UPDATE `city_life_hub` SET `zone_id` = 12 WHERE `name` = 'Goldshire';
 UPDATE `city_life_hub` SET `zone_id` = 3483 WHERE `name` IN ('HonorHold', 'Thrallmar');
 
 -- 4. Upsert duel hubs
-INSERT INTO `city_life_hub`
+INSERT IGNORE INTO `city_life_hub`
 (`name`, `enabled`, `team`, `min_level`, `max_level`, `map_id`, `zone_id`, `default_population`, `priority`)
 VALUES
 ('StormwindGate', 1, 0, 80, 80, 0, 12, 22, 215),
 ('OrgrimmarGate', 1, 1, 80, 80, 1, 14, 22, 215),
-('GoldshireDuel', 1, 0, 80, 80, 0, 12, 4, 140)
-ON DUPLICATE KEY UPDATE
-`enabled`=VALUES(`enabled`), `team`=VALUES(`team`),
-`min_level`=VALUES(`min_level`), `max_level`=VALUES(`max_level`),
-`map_id`=VALUES(`map_id`), `zone_id`=VALUES(`zone_id`),
-`default_population`=VALUES(`default_population`), `priority`=VALUES(`priority`);
+('GoldshireDuel', 1, 0, 80, 80, 0, 12, 4, 140);
 
 -- 5. Normalize category synonyms and POI types (preserving customized coordinates)
 UPDATE `city_life_spot` SET `category` = 'mailbox', `poi_type` = 2 WHERE `category` = 'mail';
@@ -114,12 +109,10 @@ UPDATE `city_life_spot` SET `poi_type` = 9 WHERE `category` IN ('duel', 'duelrin
 UPDATE `city_life_spot` SET `poi_type` = 11 WHERE `category` = 'bank' AND `poi_type` = 7;
 
 -- 6. Upsert Goldshire duel spots without touching user spots
-INSERT INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
+INSERT IGNORE INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
 SELECT h.id, 'GSDuel_Ring_1', 'duel', 1, -9462.85, 75.32, 56.45, 1.25, 6, 100, 9, 'GoldshireDuelRing', 0
-FROM `city_life_hub` h WHERE h.name='GoldshireDuel'
-ON DUPLICATE KEY UPDATE `poi_type`=VALUES(`poi_type`), `district`=VALUES(`district`);
+FROM `city_life_hub` h WHERE h.name='GoldshireDuel';
 
-INSERT INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
+INSERT IGNORE INTO `city_life_spot` (`hub_id`, `name`, `category`, `enabled`, `x`, `y`, `z`, `o`, `radius`, `weight`, `poi_type`, `district`, `partner_spot_id`)
 SELECT h.id, 'GSDuel_Ring_2', 'duel', 1, -9450.40, 85.10, 56.55, 3.80, 6, 100, 9, 'GoldshireDuelRing', 0
-FROM `city_life_hub` h WHERE h.name='GoldshireDuel'
-ON DUPLICATE KEY UPDATE `poi_type`=VALUES(`poi_type`), `district`=VALUES(`district`);
+FROM `city_life_hub` h WHERE h.name='GoldshireDuel';

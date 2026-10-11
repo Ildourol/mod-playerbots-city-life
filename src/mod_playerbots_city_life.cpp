@@ -165,9 +165,12 @@ public:
             }
         }
 
-        if (hasRealPlayer && sCityLifeMgr.IsResident(guid.GetCounter()))
+        if (hasRealPlayer)
         {
             sCityLifeMgr.DisengageResident(guid.GetCounter());
+            for (GroupReference const* ref = group->GetFirstMember(); ref; ref = ref->next())
+                if (Player* member = ref->GetSource(); member && sCityLifeMgr.IsResident(member->GetGUID().GetCounter()))
+                    sCityLifeMgr.DisengageResident(member->GetGUID().GetCounter());
         }
     }
 };
