@@ -47,7 +47,7 @@ namespace CityLife
                              bool enableSay, uint32 sayCooldownSec);
 
         void ExecutePlazaSocial(Resident& resident, Player* bot, Hub const& hub, uint32 now,
-                                bool enableSay, uint32 sayCooldownSec);
+                                bool enableUnrestricted, uint32 randomSayChance, uint32 sayCooldownSec);
 
         void ExecuteTavernSitting(Resident& resident, Player* bot, Hub const& hub, uint32 now);
 

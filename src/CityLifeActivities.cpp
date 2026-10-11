@@ -185,7 +185,12 @@ namespace CityLife
             }
 
             // Dialogue delivery & initiator state
-            if (enableSay)
+            if (!enableSay)
+            {
+                if (resident.ChatPartnerGuid != 0)
+                    CrowdReleaseChat(bot, resident);
+            }
+            else
             {
                 if (resident.ChatInitiator && resident.ChatDialogueId >= 0 &&
                     resident.ChatDialogueId < Dialogues::kCrowdDialogueCount)
@@ -841,7 +846,7 @@ namespace CityLife
         }
 
         void ExecutePlazaSocial(Resident& resident, Player* bot, Hub const& hub, uint32 now,
-                                bool enableSay, uint32 sayCooldownSec)
+                                bool enableUnrestricted, uint32 randomSayChance, uint32 sayCooldownSec)
         {
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
@@ -861,7 +866,7 @@ namespace CityLife
                 bot->HandleEmoteCommand(emotes[urand(0, 2)]);
             }
 
-            if (enableSay && roll_chance_i(15) && now >= resident.LastSayMs + sayCooldownSec * 1000)
+            if (enableUnrestricted && randomSayChance > 0 && roll_chance_i(randomSayChance) && now >= resident.LastSayMs + sayCooldownSec * 1000)
             {
                 resident.LastSayMs = now;
                 static char const* shouts[] = {

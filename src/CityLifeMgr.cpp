@@ -1857,7 +1857,7 @@ namespace CityLife
                     break;
                 case CitizenActivity::PlazaSocial:
                     if (_actPlazaSocial)
-                        Activities::ExecutePlazaSocial(resident, player, *hub, nowMs, _chatScriptedConversations, _chatSayCooldownSec);
+                        Activities::ExecutePlazaSocial(resident, player, *hub, nowMs, _chatUnrestricted, _chatRandomSayChance, _chatSayCooldownSec);
                     break;
                 case CitizenActivity::SitInTavern:
                     if (_actTavernSitting)
@@ -1910,7 +1910,11 @@ namespace CityLife
                 resident.Journal.OriginalNonCombatStrategies = beforeStrategies;
             }
 
-            ai->ChangeStrategy(_nonCombatStrategies, BOT_STATE_NON_COMBAT);
+            std::string strategiesToApply = _nonCombatStrategies;
+            if (!_chatScriptedConversations && !_chatGreetings && !_chatUnrestricted)
+                strategiesToApply += ",-chat,-emote";
+
+            ai->ChangeStrategy(strategiesToApply, BOT_STATE_NON_COMBAT);
 
             std::vector<std::string> afterStrategies = ai->GetStrategies(BOT_STATE_NON_COMBAT);
 
