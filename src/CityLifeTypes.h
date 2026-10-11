@@ -151,26 +151,23 @@ namespace CityLife
     enum class DuelPairState : uint8
     {
         None = 0,
-        Selected = 1,
-        Approaching = 2,
-        RequestSent = 3,
-        AwaitingAcceptance = 4,
-        Countdown = 5,
-        Active = 6,
-        Recovering = 7,
-        Closed = 8
+        Rendezvous = 1,
+        Challenged = 2,
+        Countdown = 3,
+        InProgress = 4,
+        Active = 4,
+        Recovering = 5,
+        Closed = 6
     };
 
     struct ResidentMutationJournal
     {
-        std::string AppliedStrategies;
+        std::vector<std::string> OriginalNonCombatStrategies;
         bool ModifiedStayPosition = false;
         float PrevStayX = 0.0f;
         float PrevStayY = 0.0f;
         float PrevStayZ = 0.0f;
         uint32 PrevStayMap = 0;
-        bool ModifiedAfk = false;
-        bool ModifiedStandState = false;
     };
 
     struct Resident

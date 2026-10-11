@@ -492,6 +492,16 @@ namespace CityLife
             } while (spotResult->NextRow());
         }
 
+        {
+            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
+            _zoneToHubId.clear();
+            for (Hub const& h : hubs)
+            {
+                if (h.ZoneId != 0)
+                    _zoneToHubId[h.ZoneId] = h.Id;
+            }
+        }
+
         _hubs.swap(hubs);
         LOG_INFO("module", "[CityLife] Loaded {} hubs. {} active residents.", _hubs.size(), _residents.size());
         return !_hubs.empty();
@@ -601,8 +611,12 @@ namespace CityLife
         return true;
     }
 
-    uint32 Manager::GetLiveWorldBotCount() const
+    uint32 Manager::GetLiveWorldBotCount(bool forceRefresh) const
     {
+        uint32 nowMs = GameTimeMS();
+        if (!forceRefresh && _lastCensusTimeMs != 0 && (nowMs - _lastCensusTimeMs < 5000))
+            return _cachedLiveBotCount;
+
         uint32 count = 0;
         std::vector<uint32> accountIdsToCheck;
         std::unordered_set<uint32> activeRealPlayerZones;
@@ -651,6 +665,8 @@ namespace CityLife
                 ++count;
         }
 
+        _cachedLiveBotCount = count;
+        _lastCensusTimeMs = nowMs;
         return count;
     }
 
@@ -681,7 +697,7 @@ namespace CityLife
         }
     }
 
-    std::vector<BotCandidate> Manager::LoadCandidates(Hub const& hub)
+    std::vector<BotCandidate> Manager::LoadCandidates(Hub const& hub, uint32 poolCount)
     {
         std::vector<BotCandidate> candidates;
         std::vector<uint32> onlineGuids;
@@ -702,7 +718,7 @@ namespace CityLife
         uint32 dynamicCeiling = _botQueryLimit;
         if (dynamicCeiling == 0)
         {
-            uint32 liveBots = GetLiveWorldBotCount();
+            uint32 liveBots = (poolCount > 0) ? poolCount : GetLiveWorldBotCount();
             dynamicCeiling = std::clamp<uint32>(liveBots / 2, 100, 1500);
         }
 
@@ -1075,11 +1091,10 @@ namespace CityLife
         if (!player || !player->GetSession() || player->GetSession()->IsBot())
             return;
 
-        if (Hub const* hub = FindHubByZone(zoneId))
-        {
-            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
-            _hubLastRealPlayerTime[hub->Id] = GameTimeSeconds();
-        }
+        std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
+        auto it = _zoneToHubId.find(zoneId);
+        if (it != _zoneToHubId.end())
+            _hubLastRealPlayerTime[it->second] = GameTimeSeconds();
     }
 
     void Manager::OnPlayerLogin(Player* player)
@@ -1087,11 +1102,10 @@ namespace CityLife
         if (!player || !player->GetSession() || player->GetSession()->IsBot())
             return;
 
-        if (Hub const* hub = FindHubByZone(player->GetZoneId()))
-        {
-            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
-            _hubLastRealPlayerTime[hub->Id] = GameTimeSeconds();
-        }
+        std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
+        auto it = _zoneToHubId.find(player->GetZoneId());
+        if (it != _zoneToHubId.end())
+            _hubLastRealPlayerTime[it->second] = GameTimeSeconds();
     }
 
     void Manager::OnPlayerLogout(Player* player)
@@ -1282,12 +1296,12 @@ namespace CityLife
         resident.LastRoamWasHub = IsHubDistrict(hub.Name, spot.District);
     }
 
-    bool Manager::AddResident(Hub const& hub)
+    bool Manager::AddResident(Hub const& hub, uint32 poolCount)
     {
         Spot const* spot = ChooseSpot(hub);
         if (!spot)
             return false;
-        std::vector<BotCandidate> candidates = LoadCandidates(hub);
+        std::vector<BotCandidate> candidates = LoadCandidates(hub, poolCount);
         if (candidates.empty())
             return false;
 
@@ -1573,7 +1587,7 @@ namespace CityLife
 
             if (!selectedHub)
                 break;
-            if (AddResident(*selectedHub))
+            if (AddResident(*selectedHub, eligiblePoolCount))
             {
                 ++changes;
                 continue;
@@ -1775,8 +1789,8 @@ namespace CityLife
     {
         if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
         {
+            resident.Journal.OriginalNonCombatStrategies = ai->GetStrategies(BOT_STATE_NON_COMBAT);
             ai->ChangeStrategy(_nonCombatStrategies, BOT_STATE_NON_COMBAT);
-            resident.Journal.AppliedStrategies = _nonCombatStrategies;
         }
     }
 
@@ -1816,8 +1830,17 @@ namespace CityLife
             positions["stay"] = stay;
         }
 
-        // Restore natural behaviors without wiping entire AI via ResetStrategies()!
-        ai->ChangeStrategy("-stay,+follow,+grind,+rpg,+travel", BOT_STATE_NON_COMBAT);
+        // Symmetrically restore original strategies if recorded; otherwise fallback to natural non-combat strategies
+        if (!resident.Journal.OriginalNonCombatStrategies.empty())
+        {
+            ai->ClearStrategies(BOT_STATE_NON_COMBAT);
+            for (std::string const& s : resident.Journal.OriginalNonCombatStrategies)
+                ai->ChangeStrategy("+" + s, BOT_STATE_NON_COMBAT);
+        }
+        else
+        {
+            ai->ChangeStrategy("-stay,+follow,+grind,+rpg,+travel", BOT_STATE_NON_COMBAT);
+        }
     }
 
     void Manager::Update(uint32 diff)

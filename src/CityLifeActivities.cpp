@@ -30,6 +30,7 @@
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "ScriptedCreature.h"
+#include "GameTime.h"
 
 #include <cmath>
 
@@ -37,6 +38,11 @@ namespace CityLife
 {
     namespace Activities
     {
+        static inline uint32 GameTimeSeconds()
+        {
+            return static_cast<uint32>(GameTime::GetGameTime().count());
+        }
+
         Player* FindNearbyRealPlayer(Player* bot, float radius)
         {
             if (!bot || !bot->IsInWorld())

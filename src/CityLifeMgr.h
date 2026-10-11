@@ -64,8 +64,8 @@ namespace CityLife
         bool IsConfiguredBotAccount(uint32 accountId);
         bool IsCandidate(Player* player);
         bool IsResidentUsable(Player* player, bool allowOwnedDuel = false) const;
-        uint32 GetLiveWorldBotCount() const;
-        std::vector<BotCandidate> LoadCandidates(Hub const& hub);
+        uint32 GetLiveWorldBotCount(bool forceRefresh = false) const;
+        std::vector<BotCandidate> LoadCandidates(Hub const& hub, uint32 poolCount = 0);
 
         Hub* FindHub(uint32 hubId);
         Hub* FindHub(std::string const& name);
@@ -83,7 +83,7 @@ namespace CityLife
         uint32 CurrentTimeMultiplier() const;
         uint32 CalculateTotalBudget(uint32 eligiblePoolCount) const;
 
-        bool AddResident(Hub const& hub);
+        bool AddResident(Hub const& hub, uint32 poolCount = 0);
         void ReleaseResident(Resident const& resident, bool returnHome);
         void ReleaseAll(bool returnHome);
         void RemoveUnavailableResidents();
@@ -221,6 +221,9 @@ namespace CityLife
         std::unordered_map<uint32, bool> _botAccountCache;
         mutable std::mutex _hubRealPlayerMutex;
         mutable std::unordered_map<uint32, uint32> _hubLastRealPlayerTime; // HubId -> timestamp
+        mutable std::unordered_map<uint32, uint32> _zoneToHubId;           // ZoneId -> HubId (thread-safe lookup)
+        mutable uint32 _cachedLiveBotCount = 0;
+        mutable uint32 _lastCensusTimeMs = 0;
     };
 }
 
