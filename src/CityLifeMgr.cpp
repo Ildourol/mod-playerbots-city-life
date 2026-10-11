@@ -218,7 +218,8 @@ namespace CityLife
         _botAccountPrefix = sConfigMgr->GetOption<std::string>("CityLife.Bots.AccountPrefix", "auto");
         _botAccountMin = sConfigMgr->GetOption<uint32>("CityLife.Bots.AccountMin", 0);
         _botAccountMax = sConfigMgr->GetOption<uint32>("CityLife.Bots.AccountMax", 0);
-        _botQueryLimit = std::max<uint32>(50, sConfigMgr->GetOption<uint32>("CityLife.Bots.QueryLimit", 500));
+        uint32 rawQueryLimit = sConfigMgr->GetOption<uint32>("CityLife.Bots.QueryLimit", 500);
+        _botQueryLimit = (rawQueryLimit == 0) ? 0 : std::max<uint32>(50, rawQueryLimit);
         _skipGroupedBots = sConfigMgr->GetOption<bool>("CityLife.Bots.SkipGrouped", true);
         _respectPlayerbotActivity = sConfigMgr->GetOption<bool>("CityLife.Bots.RespectPlayerbotActivity", false);
         _returnBots = sConfigMgr->GetOption<bool>("CityLife.Bots.ReturnWhenReleased", true);
@@ -290,6 +291,7 @@ namespace CityLife
         // Duels Settings
         _duelCooldownSec = sConfigMgr->GetOption<uint32>("CityLife.Duels.CooldownSec", 45);
         _duelAllowPlayerChallenge = sConfigMgr->GetOption<bool>("CityLife.Duels.AllowPlayerChallenge", true);
+        _duelBotChallengeRealPlayer = sConfigMgr->GetOption<bool>("CityLife.Duels.BotChallengeRealPlayer", true);
         _duelMaxDistance = sConfigMgr->GetOption<float>("CityLife.Duels.MaxDuelDistance", 40.0f);
 
         // Movement & Sink Protection
@@ -324,8 +326,6 @@ namespace CityLife
         _databaseReady = VerifyDatabase();
         if (_enable && _databaseReady)
             _databaseReady = LoadData();
-        if (_enable && !_databaseReady)
-            _enable = false;
 
         LOG_INFO("module", "[CityLife] Initialized: enable={} DB={} hubs={} residents={} budgetMode={} demandMode={}",
             _enable ? 1 : 0, _databaseReady ? "ready" : "missing", _hubs.size(), _residents.size(),
@@ -338,8 +338,13 @@ namespace CityLife
             return;
 
         std::string configuredPrefix = sConfigMgr->GetOption<std::string>(
-            "AiPlayerbot.RandomBotAccountPrefix", "rndbot", false);
-        uint32 loginDelay = sConfigMgr->GetOption<uint32>("AiPlayerbot.DisabledWithoutRealPlayerLoginDelay", 30, false);
+            "Playerbots.RandomBotAccountPrefix",
+            sConfigMgr->GetOption<std::string>("AiPlayerbot.RandomBotAccountPrefix", "rndbot", false),
+            false);
+        uint32 loginDelay = sConfigMgr->GetOption<uint32>(
+            "Playerbots.DisabledWithoutRealPlayerLoginDelay",
+            sConfigMgr->GetOption<uint32>("AiPlayerbot.DisabledWithoutRealPlayerLoginDelay", 30, false),
+            false);
         std::string prefix = Lower(_botAccountPrefix);
         if (prefix.empty() || prefix == "auto" || prefix == "playerbot" || prefix == "playerbots")
             _botAccountPrefix = configuredPrefix;
@@ -599,23 +604,53 @@ namespace CityLife
     uint32 Manager::GetLiveWorldBotCount() const
     {
         uint32 count = 0;
-        std::shared_lock<std::shared_mutex> playerLock(*HashMapHolder<Player>::GetLock());
-        HashMapHolder<Player>::MapType const& players = ObjectAccessor::GetPlayers();
-        for (auto const& pair : players)
+        std::vector<uint32> accountIdsToCheck;
+        std::unordered_set<uint32> activeRealPlayerZones;
+
         {
-            Player* p = pair.second;
-            if (!p || !p->GetSession() || !p->IsInWorld())
-                continue;
-            if (::IsRealPlayer(p))
-                continue;
-            if (!sRandomPlayerbotMgr.IsRandomBot(p) &&
-                !const_cast<Manager*>(this)->IsConfiguredBotAccount(p->GetSession()->GetAccountId()))
-                continue;
-            PlayerbotAI* ai = GET_PLAYERBOT_AI(p);
-            if (!ai || ai->HasGameClientMaster() || !p->IsAlive())
-                continue;
-            ++count;
+            std::shared_lock<std::shared_mutex> playerLock(*HashMapHolder<Player>::GetLock());
+            HashMapHolder<Player>::MapType const& players = ObjectAccessor::GetPlayers();
+            accountIdsToCheck.reserve(players.size());
+            for (auto const& pair : players)
+            {
+                Player* p = pair.second;
+                if (!p || !p->GetSession() || !p->IsInWorld())
+                    continue;
+
+                if (::IsRealPlayer(p))
+                {
+                    activeRealPlayerZones.insert(p->GetZoneId());
+                    continue;
+                }
+
+                PlayerbotAI* ai = GET_PLAYERBOT_AI(p);
+                if (!ai || ai->HasGameClientMaster() || !p->IsAlive())
+                    continue;
+
+                if (sRandomPlayerbotMgr.IsRandomBot(p))
+                    ++count;
+                else
+                    accountIdsToCheck.push_back(p->GetSession()->GetAccountId());
+            }
         }
+
+        if (!activeRealPlayerZones.empty())
+        {
+            uint32 now = GameTimeSeconds();
+            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
+            for (Hub const& hub : _hubs)
+            {
+                if (hub.ZoneId != 0 && activeRealPlayerZones.find(hub.ZoneId) != activeRealPlayerZones.end())
+                    _hubLastRealPlayerTime[hub.Id] = now;
+            }
+        }
+
+        for (uint32 accountId : accountIdsToCheck)
+        {
+            if (const_cast<Manager*>(this)->IsConfiguredBotAccount(accountId))
+                ++count;
+        }
+
         return count;
     }
 
@@ -1013,29 +1048,13 @@ namespace CityLife
         uint32 now = GameTimeSeconds();
         bool playerPresent = false;
 
-        if (hub.ZoneId != 0)
         {
-            for (auto const& [guid, player] : ObjectAccessor::GetPlayers())
-            {
-                (void)guid;
-                if (!player || !player->IsInWorld() || !player->GetSession() || player->GetSession()->IsBot())
-                    continue;
-
-                if (player->GetZoneId() == hub.ZoneId)
-                {
-                    playerPresent = true;
-                    const_cast<Manager*>(this)->_hubLastRealPlayerTime[hub.Id] = now;
-                    break;
-                }
-            }
-        }
-
-        if (!playerPresent)
-        {
+            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
             auto lastSeenIt = _hubLastRealPlayerTime.find(hub.Id);
-            if (lastSeenIt != _hubLastRealPlayerTime.end() && now - lastSeenIt->second < _burstGraceSeconds)
+            if (lastSeenIt != _hubLastRealPlayerTime.end())
             {
-                playerPresent = true; // In grace period
+                if (now >= lastSeenIt->second && (now - lastSeenIt->second) <= _burstGraceSeconds)
+                    playerPresent = true;
             }
         }
 
@@ -1058,6 +1077,7 @@ namespace CityLife
 
         if (Hub const* hub = FindHubByZone(zoneId))
         {
+            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
             _hubLastRealPlayerTime[hub->Id] = GameTimeSeconds();
         }
     }
@@ -1069,6 +1089,7 @@ namespace CityLife
 
         if (Hub const* hub = FindHubByZone(player->GetZoneId()))
         {
+            std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
             _hubLastRealPlayerTime[hub->Id] = GameTimeSeconds();
         }
     }
@@ -1211,7 +1232,7 @@ namespace CityLife
             }
         }
 
-        if (_duelAllowPlayerChallenge && bot->GetMap())
+        if (_duelAllowPlayerChallenge && _duelBotChallengeRealPlayer && bot->GetMap())
         {
             uint32 nowSec = GameTimeSeconds();
             for (auto const& pRef : bot->GetMap()->GetPlayers())
@@ -1233,7 +1254,6 @@ namespace CityLife
                 if (!bot->IsWithinLOSInMap(opponent))
                     continue;
 
-                PlayerbotsLife::RecordRealPlayerChallenge(oppGuidLow, nowSec, _duelCooldownSec);
                 return opponent;
             }
         }
@@ -1294,12 +1314,12 @@ namespace CityLife
 
             uint32 now = GameTimeSeconds();
             resident.NextMoveAt = now + urand(_relocateMinSeconds, _relocateMaxSeconds);
-            resident.NextEmoteAt = now + urand(_emoteMinSeconds, _emoteMaxSeconds);
+            resident.NextEmoteAtMs = GameTimeMS() + urand(_emoteMinSeconds, _emoteMaxSeconds) * 1000;
             resident.NextReservationRefreshAt = now + ReservationRefreshSeconds;
             resident.ReleaseAt = hub.ResidenceSeconds == 0 ? 0 : now + hub.ResidenceSeconds;
             resident.LastSweepZ = resident.TargetZ;
 
-            ApplyCityStrategies(player);
+            ApplyCityStrategies(player, resident);
             SetStayPosition(player, resident);
             if (sRandomPlayerbotMgr.IsRandomBot(player))
                 sRandomPlayerbotMgr.ScheduleTeleport(bot.GuidLow,
@@ -1321,25 +1341,54 @@ namespace CityLife
         if (resident.DuelStagingSlotId != 0)
             PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId);
 
+        if (resident.DuelPairId != 0)
+            PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident.DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
+
         PlayerbotsLife::BeginRelease(resident.Token);
         Player* player = FindPlayer(resident.Bot.GuidLow);
         if (player && player->GetSession())
         {
-            Activities::CrowdClearAfk(player);
-            Movement::DismountIfMounted(player);
-            ClearCityStrategies(player);
-
-            if (sRandomPlayerbotMgr.IsRandomBot(player))
-                sRandomPlayerbotMgr.ScheduleTeleport(resident.Bot.GuidLow);
-
-            if (returnHome && !player->IsBeingTeleported() && !player->IsInCombat())
+            PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
+            bool isPlayerControlled = ai && (ai->HasGameClientMaster() || ::IsRealPlayer(player));
+            if (!isPlayerControlled && player->GetGroup())
             {
-                Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX, resident.OriginalY,
-                    resident.OriginalZ, resident.OriginalO, true);
+                for (GroupReference const* ref = player->GetGroup()->GetFirstMember(); ref != nullptr; ref = ref->next())
+                {
+                    if (ref->GetSource() && ::IsRealPlayer(ref->GetSource()))
+                    {
+                        isPlayerControlled = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!isPlayerControlled)
+            {
+                Activities::CrowdClearAfk(player);
+                Movement::DismountIfMounted(player);
+                RestoreResidentState(player, resident);
+
+                if (sRandomPlayerbotMgr.IsRandomBot(player))
+                    sRandomPlayerbotMgr.ScheduleTeleport(resident.Bot.GuidLow);
+
+                if (returnHome && !player->IsBeingTeleported() && !player->IsInCombat())
+                {
+                    Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX, resident.OriginalY,
+                        resident.OriginalZ, resident.OriginalO, true);
+                }
+            }
+            else
+            {
+                if (ai)
+                {
+                    PositionMap& positions = ai->GetAiObjectContext()->GetValue<PositionMap&>("position")->Get();
+                    PositionInfo stay = positions["stay"];
+                    stay.Reset();
+                    positions["stay"] = stay;
+                }
             }
         }
         PlayerbotsLife::ReleaseLease(resident.Token);
-        PlayerbotsLife::Release(resident.Bot.GuidLow, PlayerbotsLife::ReservationOwner::CityLife);
     }
 
     void Manager::ReleaseAll(bool returnHome)
@@ -1428,6 +1477,20 @@ namespace CityLife
                         uint32 cut = std::min(reducible, excess);
                         t -= cut;
                         excess -= cut;
+                    }
+
+                    // Hard budget ceiling: If sum of hub.MinCount exceeded totalBudget, shave remaining excess
+                    if (excess > 0)
+                    {
+                        for (Hub const& hub : _hubs)
+                        {
+                            if (excess == 0)
+                                break;
+                            uint32& t = targets[hub.Id];
+                            uint32 cut = std::min(t, excess);
+                            t -= cut;
+                            excess -= cut;
+                        }
                     }
                 }
                 else if (allocatedTotal < totalBudget)
@@ -1584,8 +1647,8 @@ namespace CityLife
                 resident.NextReservationRefreshAt = nowSec + ReservationRefreshSeconds;
             }
 
-            // Tactical Duel Combat & Boundary Maintenance (Option A)
-            if (player->duel && (resident.Activity == CitizenActivity::Duel || resident.Role == CitizenRole::GateDuelist || resident.Role == CitizenRole::GoldshireDuelist) && _actDuels)
+            // Tactical Duel Combat & Boundary Maintenance
+            if (player->duel && _actDuels)
             {
                 Activities::DriveActiveDuel(resident, player, *hub, nowMs, _duelMaxDistance);
                 continue;
@@ -1613,7 +1676,7 @@ namespace CityLife
             if (player->GetMapId() != hub->MapId ||
                 player->GetDistance2d(resident.TargetX, resident.TargetY) > _leashRadius)
             {
-                ApplyCityStrategies(player);
+                ApplyCityStrategies(player, resident);
                 SetStayPosition(player, resident);
                 Movement::MoveToPosition(player, hub->MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, true);
                 continue;
@@ -1698,54 +1761,68 @@ namespace CityLife
                     break;
                 case CitizenActivity::RandomEmote:
                 default:
-                    if (_actRandomEmotes && resident.NextEmoteAt <= nowSec)
+                    if (_actRandomEmotes && resident.NextEmoteAtMs <= nowMs)
                     {
                         Activities::ExecuteRandomEmote(resident, player, *hub, nowMs);
-                        resident.NextEmoteAt = nowSec + urand(_emoteMinSeconds, _emoteMaxSeconds);
+                        resident.NextEmoteAtMs = nowMs + urand(_emoteMinSeconds, _emoteMaxSeconds) * 1000;
                     }
                     break;
             }
         }
     }
 
-    void Manager::ApplyCityStrategies(Player* player) const
+    void Manager::ApplyCityStrategies(Player* player, Resident& resident) const
     {
         if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
         {
-            if (!ai->HasStrategy("stay", BOT_STATE_NON_COMBAT))
-                ai->ChangeStrategy(_nonCombatStrategies, BOT_STATE_NON_COMBAT);
-            if (ai->HasStrategy("duel", BOT_STATE_NON_COMBAT) ||
-                ai->HasStrategy("pvp", BOT_STATE_NON_COMBAT))
-                ai->ChangeStrategy("-duel,-pvp", BOT_STATE_NON_COMBAT);
+            ai->ChangeStrategy(_nonCombatStrategies, BOT_STATE_NON_COMBAT);
+            resident.Journal.AppliedStrategies = _nonCombatStrategies;
         }
     }
 
-    void Manager::SetStayPosition(Player* player, Resident const& resident) const
+    void Manager::SetStayPosition(Player* player, Resident& resident) const
     {
         PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
         if (!ai)
             return;
         PositionMap& positions = ai->GetAiObjectContext()->GetValue<PositionMap&>("position")->Get();
         PositionInfo stay = positions["stay"];
+        if (!resident.Journal.ModifiedStayPosition)
+        {
+            resident.Journal.ModifiedStayPosition = true;
+            resident.Journal.PrevStayX = stay.x;
+            resident.Journal.PrevStayY = stay.y;
+            resident.Journal.PrevStayZ = stay.z;
+            resident.Journal.PrevStayMap = stay.mapId;
+        }
         stay.Set(resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetMap);
         positions["stay"] = stay;
     }
 
-    void Manager::ClearCityStrategies(Player* player) const
+    void Manager::RestoreResidentState(Player* player, Resident const& resident) const
     {
         PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
         if (!ai)
             return;
+
         PositionMap& positions = ai->GetAiObjectContext()->GetValue<PositionMap&>("position")->Get();
         PositionInfo stay = positions["stay"];
-        stay.Reset();
-        positions["stay"] = stay;
-        ai->ResetStrategies();
+        if (resident.Journal.ModifiedStayPosition)
+        {
+            if (resident.Journal.PrevStayX != 0.0f || resident.Journal.PrevStayY != 0.0f)
+                stay.Set(resident.Journal.PrevStayX, resident.Journal.PrevStayY, resident.Journal.PrevStayZ, resident.Journal.PrevStayMap);
+            else
+                stay.Reset();
+            positions["stay"] = stay;
+        }
+
+        // Restore natural behaviors without wiping entire AI via ResetStrategies()!
+        ai->ChangeStrategy("-stay,+follow,+grind,+rpg,+travel", BOT_STATE_NON_COMBAT);
     }
 
     void Manager::Update(uint32 diff)
     {
-        if (!_enable)
+        if (!_enable || !_databaseReady)
             return;
 
         if (_startupElapsedMs < _startupDelaySeconds * IN_MILLISECONDS)
@@ -1794,8 +1871,8 @@ namespace CityLife
             _baselinePercent, _burstGraceSeconds);
         handler->PSendSysMessage("LivingCrowd: AwakeRadius={}yd ChatCooldown={}s AFK={}-{}s",
             _crowdPlayerRadius, _crowdChatCooldownSec, _crowdAfkMinSec, _crowdAfkMaxSec);
-        handler->PSendSysMessage("Duels: Cooldown={}s MaxDist={:.1f}yd AllowPlayer={}",
-            _duelCooldownSec, _duelMaxDistance, _duelAllowPlayerChallenge ? 1 : 0);
+        handler->PSendSysMessage("Duels: Cooldown={}s MaxDist={:.1f}yd AllowPlayer={} BotChallengeReal={}",
+            _duelCooldownSec, _duelMaxDistance, _duelAllowPlayerChallenge ? 1 : 0, _duelBotChallengeRealPlayer ? 1 : 0);
         handler->PSendSysMessage("Active Residents by Role:");
 
         uint32 crowdCount = 0, duelCount = 0, fisherCount = 0, dancerCount = 0, flexCount = 0;
@@ -1822,7 +1899,7 @@ namespace CityLife
         handler->PSendSysMessage("City Life commands:");
         handler->PSendSysMessage(".citylife status");
         handler->PSendSysMessage(".citylife compat");
-        handler->PSendSysMessage(".citylife reload");
+        handler->PSendSysMessage(".citylife reload [config|data|all]");
         handler->PSendSysMessage(".citylife debug status");
         handler->PSendSysMessage(".citylife hub list");
         handler->PSendSysMessage(".citylife hub add <name> <alliance|horde|any> <minLevel> <maxLevel> <population> [priority]");
@@ -1965,9 +2042,12 @@ namespace CityLife
             return true;
         }
 
+        uint32 hubId = hub->Id;
+        std::string hubName = hub->Name;
+
         if (operation == "list")
         {
-            handler->PSendSysMessage("City Life - Spot list for {}:", hub->Name);
+            handler->PSendSysMessage("City Life - Spot list for {}:", hubName);
             for (Spot const& spot : hub->Spots)
                 handler->PSendSysMessage("#{} {} [{}] weight={} radius={} ({:.1f}, {:.1f}, {:.1f})",
                     spot.Id, spot.Name, spot.Category, spot.Weight, spot.Radius, spot.X, spot.Y, spot.Z);
@@ -1996,10 +2076,10 @@ namespace CityLife
                 "VALUES ({},'{}','{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE category=VALUES(category),"
                 "enabled=1,x=VALUES(x),y=VALUES(y),z=VALUES(z),o=VALUES(o),radius=VALUES(radius),"
                 "weight=VALUES(weight)",
-                hub->Id, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
+                hubId, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
                 gm->GetOrientation(), radius, weight);
             LoadData();
-            handler->PSendSysMessage("City Life: Saved spot '{}/{}' at GM position.", hub->Name, spotName);
+            handler->PSendSysMessage("City Life: Saved spot '{}/{}' at GM position.", hubName, spotName);
             return true;
         }
 
@@ -2008,9 +2088,9 @@ namespace CityLife
             std::string spotName = args[3];
             WorldDatabase.EscapeString(spotName);
             WorldDatabase.DirectExecute("DELETE FROM city_life_spot WHERE hub_id={} AND name='{}'",
-                hub->Id, spotName);
+                hubId, spotName);
             LoadData();
-            handler->PSendSysMessage("City Life: Deleted spot '{}/{}'.", hub->Name, spotName);
+            handler->PSendSysMessage("City Life: Deleted spot '{}/{}'.", hubName, spotName);
             return true;
         }
         return false;
@@ -2042,10 +2122,28 @@ namespace CityLife
         }
         if (command == "reload")
         {
-            if (!_databaseReady || !LoadData())
-                handler->PSendSysMessage("City Life: Reload failed. Check database and server logs.");
-            else
+            std::string sub = args.size() > 1 ? Lower(args[1]) : "all";
+            bool dataOk = true;
+
+            if (sub == "config" || sub == "all")
+            {
+                LoadConfig();
+            }
+
+            if (sub == "data" || sub == "all")
+            {
+                _databaseReady = VerifyDatabase() && LoadData();
+                dataOk = _databaseReady;
+            }
+
+            if (!dataOk)
+                handler->PSendSysMessage("City Life: Reload encountered database errors. Check logs.");
+            else if (sub == "config")
+                handler->PSendSysMessage("City Life: Successfully reloaded configuration.");
+            else if (sub == "data")
                 handler->PSendSysMessage("City Life: Successfully reloaded hubs and spots data.");
+            else
+                handler->PSendSysMessage("City Life: Successfully reloaded configuration and data.");
             return true;
         }
         if (command == "hub" && HandleHubCommand(handler, args))

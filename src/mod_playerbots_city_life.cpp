@@ -145,7 +145,7 @@ class CityLifeGroupScript : public GroupScript
 {
 public:
     CityLifeGroupScript()
-        : GroupScript("CityLifeGroupScript", { GROUPSCRIPT_ON_ADD_MEMBER })
+        : GroupScript("CityLifeGroupScript", { GROUPHOOK_ON_ADD_MEMBER })
     {
     }
 

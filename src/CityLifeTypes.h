@@ -148,6 +148,31 @@ namespace CityLife
         TeamSide Team = TeamSide::Any;
     };
 
+    enum class DuelPairState : uint8
+    {
+        None = 0,
+        Selected = 1,
+        Approaching = 2,
+        RequestSent = 3,
+        AwaitingAcceptance = 4,
+        Countdown = 5,
+        Active = 6,
+        Recovering = 7,
+        Closed = 8
+    };
+
+    struct ResidentMutationJournal
+    {
+        std::string AppliedStrategies;
+        bool ModifiedStayPosition = false;
+        float PrevStayX = 0.0f;
+        float PrevStayY = 0.0f;
+        float PrevStayZ = 0.0f;
+        uint32 PrevStayMap = 0;
+        bool ModifiedAfk = false;
+        bool ModifiedStandState = false;
+    };
+
     struct Resident
     {
         BotCandidate Bot;
@@ -164,7 +189,7 @@ namespace CityLife
         float TargetZ = 0.0f;
         float TargetO = 0.0f;
         uint32 NextMoveAt = 0;
-        uint32 NextEmoteAt = 0;
+        uint32 NextEmoteAtMs = 0;
         uint32 NextReservationRefreshAt = 0;
         uint32 ReleaseAt = 0;
         bool Stationary = false;
@@ -196,6 +221,8 @@ namespace CityLife
         bool ChatInitiator = false;
 
         // Paired Duel & Tactical Combat State
+        uint64 DuelPairId = 0;
+        DuelPairState DuelState = DuelPairState::None;
         uint32 DuelPartnerGuid = 0;
         uint32 DuelStateMs = 0;
         uint32 DuelCooldownUntilMs = 0;
@@ -210,9 +237,10 @@ namespace CityLife
         // Alternating District Roam State
         bool LastRoamWasHub = false;
 
-        // Tokenized Cooperation Lease
+        // Tokenized Cooperation Lease & State Mutation Journal
         PlayerbotsLife::LeaseToken Token;
         uint32 DuelStagingSlotId = 0;
+        ResidentMutationJournal Journal;
     };
 }
 

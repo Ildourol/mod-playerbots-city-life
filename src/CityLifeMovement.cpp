@@ -113,23 +113,80 @@ namespace CityLife
             if (!CanMountHere(bot) || bot->HasMountedAura() || bot->isMoving())
                 return false;
 
-            // Popular ground mounts by race or generic
+            // Class mounts (prioritized), epic racial mounts (100%), and standard racial mounts (60%)
             static uint32 const mountSpells[] = {
-                458,    // Brown Horse
-                470,    // Black Stallion
-                472,    // Pinto
-                580,    // Timber Wolf
-                6648,   // Chestnut Mare
-                6653,   // Gray Wolf
-                6654,   // Brown Wolf
-                10793,  // Striped Frostsaber
-                10796,  // Spotted Frostsaber
-                10873,  // Red Mechanostrider
-                10969,  // Blue Mechanostrider
-                18989,  // Gray Kodo
-                18990,  // Brown Kodo
-                34795,  // Swift Palomino
-                35710   // Black Hawkstrider
+                // Class Mounts
+                48778,  // Acherus Deathcharger (Death Knight)
+                23214,  // Charger (Paladin 60)
+                23161,  // Dreadsteed (Warlock 60)
+                13819,  // Warhorse (Paladin 20/40)
+                5784,   // Felsteed (Warlock 20/40)
+
+                // Epic Racial Mounts (100% speed)
+                23227,  // Swift White Steed (Human)
+                23228,  // Swift Brown Steed (Human)
+                23229,  // Swift Palomino (Human)
+                23238,  // Swift Brown Ram (Dwarf)
+                23239,  // Swift Gray Ram (Dwarf)
+                23240,  // Swift White Ram (Dwarf)
+                23219,  // Swift Mistsaber (Night Elf)
+                23221,  // Swift Frostsaber (Night Elf)
+                23338,  // Swift Stormsaber (Night Elf)
+                23222,  // Swift Green Mechanostrider (Gnome)
+                23223,  // Swift White Mechanostrider (Gnome)
+                23225,  // Swift Yellow Mechanostrider (Gnome)
+                35717,  // Great Green Elekk (Draenei)
+                35718,  // Great Blue Elekk (Draenei)
+                35719,  // Great Purple Elekk (Draenei)
+                23250,  // Swift Brown Wolf (Orc)
+                23251,  // Swift Timber Wolf (Orc)
+                23252,  // Swift Gray Wolf (Orc)
+                17465,  // Green Skeletal Warhorse (Undead)
+                23246,  // Great White Kodo (Tauren)
+                23247,  // Great Brown Kodo (Tauren)
+                23248,  // Great Gray Kodo (Tauren)
+                23241,  // Swift Blue Raptor (Troll)
+                23242,  // Swift Olive Raptor (Troll)
+                23243,  // Swift Orange Raptor (Troll)
+                35711,  // Swift Pink Hawkstrider (Blood Elf)
+                35712,  // Swift Green Hawkstrider (Blood Elf)
+                35713,  // Swift Purple Hawkstrider (Blood Elf)
+
+                // Standard Racial Mounts (60% speed)
+                458,    // Brown Horse (Human)
+                470,    // Black Stallion (Human)
+                472,    // Pinto (Human)
+                6648,   // Chestnut Mare (Human)
+                6777,   // Gray Ram (Dwarf)
+                6898,   // White Ram (Dwarf)
+                6899,   // Brown Ram (Dwarf)
+                8394,   // Striped Nightsaber (Night Elf)
+                10793,  // Striped Frostsaber (Night Elf)
+                10796,  // Spotted Frostsaber (Night Elf)
+                10873,  // Red Mechanostrider (Gnome)
+                10969,  // Blue Mechanostrider (Gnome)
+                10971,  // Green Mechanostrider (Gnome)
+                17453,  // Unpainted Mechanostrider (Gnome)
+                34406,  // Brown Elekk (Draenei)
+                35715,  // Gray Elekk (Draenei)
+                35716,  // Purple Elekk (Draenei)
+                580,    // Timber Wolf (Orc)
+                6653,   // Gray Wolf (Orc)
+                6654,   // Brown Wolf (Orc)
+                824,    // Black Skeletal Horse (Undead)
+                17462,  // Red Skeletal Horse (Undead)
+                17463,  // Blue Skeletal Horse (Undead)
+                17464,  // Brown Skeletal Horse (Undead)
+                18989,  // Gray Kodo (Tauren)
+                18990,  // Brown Kodo (Tauren)
+                18991,  // White Kodo (Tauren)
+                8395,   // Emerald Raptor (Troll)
+                10799,  // Turquoise Raptor (Troll)
+                10800,  // Violet Raptor (Troll)
+                35018,  // Blue Hawkstrider (Blood Elf)
+                35020,  // Brown Hawkstrider (Blood Elf)
+                35022,  // Purple Hawkstrider (Blood Elf)
+                35710   // Black Hawkstrider (Blood Elf)
             };
 
             for (uint32 spellId : mountSpells)
@@ -155,6 +212,8 @@ namespace CityLife
             }
             else
             {
+                bot->ClearUnitState(UNIT_STATE_CHASE | UNIT_STATE_FOLLOW);
+                bot->GetMotionMaster()->Clear();
                 bot->GetMotionMaster()->MovePoint(0, x, y, z);
             }
         }

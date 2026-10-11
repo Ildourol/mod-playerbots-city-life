@@ -91,6 +91,7 @@ CityLife.Bots.AccountMin = 0
 CityLife.Bots.AccountMax = 0
 
 # Maximum number of online bot candidates evaluated per hub reconciliation.
+# Set to 0 to enable dynamic census scaling (50% of live bots, bounded 100-1500).
 # Tuned to 500 for optimal memory footprint and query performance.
 CityLife.Bots.QueryLimit = 500
 
@@ -201,6 +202,13 @@ CityLife.Duels.CooldownSec = 45
 
 # Allow real players to challenge city duel bots.
 CityLife.Duels.AllowPlayerChallenge = 1
+
+# Allow bots to initiate duel challenges directed at real players within duel spots.
+# When enabled, bots will issue challenges to nearby non-GM real players (subject to
+# cross-module rate limiting and PlayerbotsLife challenge cooldowns). Real players with GM
+# privileges (security > SEC_PLAYER) are strictly shielded.
+# Default: 1 (Enabled)
+CityLife.Duels.BotChallengeRealPlayer = 1
 
 # Maximum leash radius around duel rings (in yards).
 CityLife.Duels.MaxDuelDistance = 40.0

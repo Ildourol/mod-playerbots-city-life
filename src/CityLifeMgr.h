@@ -9,6 +9,7 @@
 
 #include "CityLifeTypes.h"
 
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -91,9 +92,9 @@ namespace CityLife
         void RelocateResident(Resident& resident, Hub const& hub);
         void AssignSpot(Resident& resident, Hub const& hub, Spot const& spot, bool allowStationary);
 
-        void ApplyCityStrategies(Player* player) const;
-        void SetStayPosition(Player* player, Resident const& resident) const;
-        void ClearCityStrategies(Player* player) const;
+        void ApplyCityStrategies(Player* player, Resident& resident) const;
+        void SetStayPosition(Player* player, Resident& resident) const;
+        void RestoreResidentState(Player* player, Resident const& resident) const;
 
         // Command Handlers
         void PrintStatus(ChatHandler* handler) const;
@@ -190,6 +191,7 @@ namespace CityLife
         // Duels Settings
         uint32 _duelCooldownSec = 45;
         bool _duelAllowPlayerChallenge = true;
+        bool _duelBotChallengeRealPlayer = true;
         float _duelMaxDistance = 40.0f;
 
         // Movement & Sink Settings
@@ -217,7 +219,8 @@ namespace CityLife
         std::vector<Hub> _hubs;
         std::vector<Resident> _residents;
         std::unordered_map<uint32, bool> _botAccountCache;
-        std::unordered_map<uint32, uint32> _hubLastRealPlayerTime; // HubId -> timestamp
+        mutable std::mutex _hubRealPlayerMutex;
+        mutable std::unordered_map<uint32, uint32> _hubLastRealPlayerTime; // HubId -> timestamp
     };
 }
 
