@@ -6,11 +6,14 @@
 
 #include "CityLifeMgr.h"
 #include "LifeBotReservation.h"
+#include "LifeTelemetryBridge.h"
 
 #include "Chat.h"
 #include "CommandScript.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "PlayerbotAI.h"
+#include "Playerbots.h"
 #include "PlayerScript.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
@@ -108,15 +111,51 @@ public:
 
     bool OnPlayerBeforeAchievementComplete(Player* player, AchievementEntry const* /*achievement*/) override
     {
-        if (sCityLifeMgr.IsBlockAchievementsEnabled() && player && sCityLifeMgr.IsResident(player->GetGUID().GetCounter()))
+        if (!player || !sCityLifeMgr.IsBlockAchievementsEnabled())
+            return true;
+
+        // Never suppress real human players or human-controlled SelfBots
+        if (::IsRealPlayer(player))
+            return true;
+
+        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+        {
+            if (ai->IsSelfBot())
+                return true;
+        }
+
+        uint32 const guidLow = player->GetGUID().GetCounter();
+        if (sCityLifeMgr.IsResidentInSyntheticActivity(guidLow))
+        {
+            sCityLifeMgr.RecordSuppressedAchievement();
             return false;
+        }
+
         return true;
     }
 
     bool OnPlayerBeforeCriteriaProgress(Player* player, AchievementCriteriaEntry const* /*criteria*/) override
     {
-        if (sCityLifeMgr.IsBlockAchievementsEnabled() && player && sCityLifeMgr.IsResident(player->GetGUID().GetCounter()))
+        if (!player || !sCityLifeMgr.IsBlockAchievementsEnabled())
+            return true;
+
+        // Never suppress real human players or human-controlled SelfBots
+        if (::IsRealPlayer(player))
+            return true;
+
+        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+        {
+            if (ai->IsSelfBot())
+                return true;
+        }
+
+        uint32 const guidLow = player->GetGUID().GetCounter();
+        if (sCityLifeMgr.IsResidentInSyntheticActivity(guidLow))
+        {
+            sCityLifeMgr.RecordSuppressedCriteria();
             return false;
+        }
+
         return true;
     }
 };
@@ -177,10 +216,15 @@ public:
 
 void AddCityLifeScripts()
 {
+    static_assert(PlayerbotsLife::LIFE_BOT_RESERVATION_PROTOCOL_VERSION == 2026101104,
+        "City Life requires LifeBotReservation protocol version 2026101104");
+
     PlayerbotsLife::RegisterActiveModule(PlayerbotsLife::ModuleSystemFlags::MODULE_CITY_LIFE);
+    PlayerbotsLife::RegisterTelemetryBridge();
     new CityLifeWorldScript();
     new CityLifePlayerScript();
     new CityLifeGroupScript();
     new CityLifeCommandScript();
-    LOG_INFO("server.loading", ">> Loaded mod-playerbots-city-life");
+    LOG_INFO("server.loading", ">> Loaded mod-playerbots-city-life (protocol={}, registry={:p})",
+        PlayerbotsLife::GetReservationProtocolVersion(), PlayerbotsLife::GetReservationRegistryAddress());
 }

@@ -27,6 +27,7 @@ namespace CityLife
         bool IsAtCoordinates(Player* bot, uint32 mapId, float x, float y, float tolerance = 3.5f);
         bool PathTouchesWater(Player* bot, PathGenerator const& path);
         bool HasCompleteWalkablePath(Player* bot, float x, float y, float z, bool allowWater = false);
+        bool ValidateCityDestination(Player* bot, uint32 mapId, float x, float y, float z, float o, bool allowWater = false);
     }
 }
 

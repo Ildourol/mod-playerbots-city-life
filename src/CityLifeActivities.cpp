@@ -115,7 +115,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             if (!enableAfk && bot->isAFK())
@@ -450,7 +450,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || !bot->duel)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             Player* opponent = bot->duel->Opponent;
@@ -497,6 +497,8 @@ namespace CityLife
                 resident.DuelState = DuelPairState::Challenged;
                 if (bot != bot->duel->Initiator && bot->GetSession())
                 {
+                    if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
+                        return;
                     WorldPacket packet(CMSG_DUEL_ACCEPTED, 8);
                     packet << bot->GetGuidValue(PLAYER_DUEL_ARBITER);
                     bot->GetSession()->HandleDuelAcceptedOpcode(packet);
@@ -551,7 +553,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             if (bot->duel || bot->IsInCombat())
@@ -640,15 +642,26 @@ namespace CityLife
                 // When within standoff proximity or duel spell range (10 yards), face and challenge
                 if (dist <= 10.0f)
                 {
+                    if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
+                        return;
+
                     resident.DuelMeetingSet = false;
                     resident.DuelState = DuelPairState::Challenged;
                     bot->SetFacingToObject(opponent);
                     if (resident.DuelInitiator)
                     {
-                        if (bot->CastSpell(opponent, 7266, false) == SPELL_CAST_OK)
+                        if (::IsRealPlayer(opponent))
                         {
-                            if (::IsRealPlayer(opponent))
-                                PlayerbotsLife::RecordRealPlayerChallenge(resident.DuelPartnerGuid, GameTimeSeconds(), duelCooldownSec);
+                            uint32 nowSec = GameTimeSeconds();
+                            if (!PlayerbotsLife::TryClaimRealPlayerChallenge(resident.DuelPartnerGuid, nowSec, duelCooldownSec))
+                                return;
+
+                            if (bot->CastSpell(opponent, 7266, false) != SPELL_CAST_OK)
+                                PlayerbotsLife::ReleaseRealPlayerChallengeClaim(resident.DuelPartnerGuid, nowSec + duelCooldownSec);
+                        }
+                        else
+                        {
+                            bot->CastSpell(opponent, 7266, false);
                         }
                     }
                 }
@@ -747,12 +760,23 @@ namespace CityLife
                     return;
                 }
 
+                if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
+                    return;
+
                 bot->SetFacingToObject(opponent);
                 resident.DuelState = DuelPairState::Challenged;
-                if (bot->CastSpell(opponent, 7266, false) == SPELL_CAST_OK)
+                if (::IsRealPlayer(opponent))
                 {
-                    if (::IsRealPlayer(opponent))
-                        PlayerbotsLife::RecordRealPlayerChallenge(oppGuidLow, GameTimeSeconds(), duelCooldownSec);
+                    uint32 nowSec = GameTimeSeconds();
+                    if (!PlayerbotsLife::TryClaimRealPlayerChallenge(oppGuidLow, nowSec, duelCooldownSec))
+                        return;
+
+                    if (bot->CastSpell(opponent, 7266, false) != SPELL_CAST_OK)
+                        PlayerbotsLife::ReleaseRealPlayerChallengeClaim(oppGuidLow, nowSec + duelCooldownSec);
+                }
+                else
+                {
+                    bot->CastSpell(opponent, 7266, false);
                 }
             }
         }
@@ -760,6 +784,9 @@ namespace CityLife
         void ExecuteDuelSpectator(Resident& resident, Player* bot, Hub const& hub, uint32 now)
         {
             if (!bot || !bot->IsInWorld() || bot->isMoving())
+                return;
+
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             Spot const* spot = sCityLifeMgr.FindSpot(resident.HubId, resident.SpotId);
@@ -783,7 +810,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             Movement::DismountIfMounted(bot);
@@ -813,7 +840,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             Movement::DismountIfMounted(bot);
@@ -851,7 +878,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             if (resident.Sitting)
@@ -884,7 +911,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             if (!resident.Sitting)
@@ -905,7 +932,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             if (!resident.Sitting)
@@ -925,7 +952,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             // Search for nearby creature with matching NPCFlag
@@ -955,7 +982,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             std::list<GameObject*> gameobjects;
@@ -979,7 +1006,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving() || !resident.AtSpot)
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             if (enableInteractions)
@@ -1000,7 +1027,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld())
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             Spot const* spot = sCityLifeMgr.FindSpot(resident.HubId, resident.SpotId);
@@ -1018,7 +1045,7 @@ namespace CityLife
             if (!bot || !bot->IsInWorld() || bot->isMoving())
                 return;
 
-            if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
                 return;
 
             static uint32 const emotes[] = {

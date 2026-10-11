@@ -257,8 +257,12 @@ CityLife.Interactions.Enable = 0
 CityLife.Interactions.PlayerTrading = 0
 CityLife.Interactions.BuyFood = 0
 
-# Shield realm-first achievements and criteria progress from ambient borrowed bots.
-CityLife.Achievements.BlockAchievements = 1
+# Shield achievements and criteria progress while bots are actively engaged in
+# synthetic roleplay activities (duels, crowd scenes, tavern drinking, dancing).
+# When enabled (1), suppression applies only during synthetic actions and strictly
+# shields real human players and human-controlled SelfBots from suppression.
+# Default: 0 (Disabled - borrowed bots retain normal achievement progression)
+CityLife.Achievements.BlockAchievements = 0
 
 ###################################################################################################
 # Hub Configurations

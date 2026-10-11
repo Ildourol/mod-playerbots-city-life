@@ -8,6 +8,7 @@
 
 #include "Log.h"
 #include "Map.h"
+#include "MapMgr.h"
 #include "MotionMaster.h"
 #include "PathGenerator.h"
 #include "Player.h"
@@ -203,7 +204,7 @@ namespace CityLife
 
         void MoveToPosition(Player* bot, uint32 mapId, float x, float y, float z, float o, bool teleport)
         {
-            if (!bot)
+            if (!bot || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(o))
                 return;
 
             if (teleport || bot->GetMapId() != mapId)
@@ -305,6 +306,53 @@ namespace CityLife
 
             if (!allowWater && PathTouchesWater(bot, path))
                 return false;
+
+            return true;
+        }
+
+        bool ValidateCityDestination(Player* bot, uint32 mapId, float x, float y, float z, float o, bool allowWater)
+        {
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(o))
+                return false;
+
+            Map const* map = nullptr;
+            if (bot && bot->IsInWorld())
+            {
+                if (bot->GetMapId() == mapId)
+                    map = bot->GetMap();
+            }
+            if (!map)
+                map = sMapMgr->FindBaseMap(mapId);
+
+            if (!map)
+                return false;
+
+            if (map->Instanceable())
+                return false;
+
+            if (bot)
+            {
+                if (bot->InBattleground() || bot->InBattlegroundQueue())
+                    return false;
+
+                if (bot->GetMap() && bot->GetMap()->Instanceable())
+                    return false;
+
+                if (!allowWater)
+                {
+                    uint32 phase = bot->GetPhaseMask();
+                    float ch = bot->GetCollisionHeight();
+                    if (map->IsInWater(phase, x, y, z, ch))
+                        return false;
+                }
+
+                if (bot->GetMapId() == mapId)
+                {
+                    float groundZ = map->GetHeight(bot->GetPhaseMask(), x, y, z, true, 50.0f);
+                    if (groundZ != INVALID_HEIGHT && std::abs(groundZ - z) > 30.0f)
+                        return false;
+                }
+            }
 
             return true;
         }

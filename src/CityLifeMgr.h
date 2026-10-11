@@ -10,6 +10,7 @@
 #include "CityLifeTypes.h"
 #include "AsyncCallbackProcessor.h"
 #include "QueryCallback.h"
+#include "Transaction.h"
 
 #include <mutex>
 #include <string>
@@ -52,6 +53,11 @@ namespace CityLife
         bool IsInteractionsEnabled() const { return _enableInteractions; }
         bool IsPlayerTradingEnabled() const { return _enablePlayerTrading; }
         bool IsBlockAchievementsEnabled() const { return _blockAchievements; }
+        void RecordSuppressedAchievement() { ++_suppressedAchievements; }
+        void RecordSuppressedCriteria() { ++_suppressedCriteria; }
+        bool IsResidentInSyntheticActivity(uint32 guidLow) const;
+        bool ValidateResidentAction(Player* bot, Resident const& resident) const;
+        bool IsHumanControlled(Player* player) const;
 
     private:
         Manager() = default;
@@ -65,7 +71,6 @@ namespace CityLife
         Player* FindPlayer(uint32 guidLow) const;
         bool IsConfiguredBotAccount(uint32 accountId);
         void RefreshAccountCache();
-        bool IsHumanControlled(Player* player) const;
         bool IsCandidate(Player* player);
         bool IsResidentUsable(Player* player, bool allowOwnedDuel = false) const;
         uint32 GetLiveWorldBotCount(bool forceRefresh = false) const;
@@ -92,8 +97,9 @@ namespace CityLife
         void ProcessAdmissionGrants();
         void CancelAdmissions();
         void ReleaseResident(Resident const& resident, bool returnHome);
-        void ProcessReleasingResidents();
+        void ProcessReleasingResidents(bool isShutdown = false);
         void ReleaseAll(bool returnHome);
+        void QueueMutation(std::string const& sql, uint32 gmGuidLow = 0, std::string const& successMsg = "");
         void RemoveUnavailableResidents();
         void MaintainPopulation();
         void MaintainResidents();
@@ -215,8 +221,9 @@ namespace CityLife
         uint32 _chatSayCooldownSec = 30;
         bool _enableInteractions = false;
         bool _enablePlayerTrading = false;
-        bool _enableBuyFood = false;
-        bool _blockAchievements = true;
+        bool _blockAchievements = false;
+        uint32 _suppressedAchievements = 0;
+        uint32 _suppressedCriteria = 0;
 
         // Advanced Micro-Behaviors (Ported from mod-city-bots)
         bool _alternatingDistricts = true;
@@ -229,17 +236,26 @@ namespace CityLife
         {
             Resident Actor;
             bool ReturnHome = false;
+            uint32 ReleaseStartedAt = 0;
+            uint32 Attempts = 0;
         };
         std::vector<ReleasingResident> _releasingResidents;
         std::vector<Resident> _residents;
+        std::unordered_map<uint32, uint32> _hubResidentCounts;
         std::unordered_map<uint32, bool> _botAccountCache;
         mutable std::mutex _hubRealPlayerMutex;
         mutable std::unordered_map<uint32, uint32> _hubLastRealPlayerTime; // HubId -> timestamp
-        mutable std::unordered_map<uint32, uint32> _zoneToHubId;           // ZoneId -> HubId (thread-safe lookup)
+        mutable std::unordered_map<uint32, std::vector<uint32>> _zoneToHubIds; // ZoneId -> HubIds (thread-safe lookup)
         mutable uint32 _cachedLiveBotCount = 0;
         mutable uint32 _lastCensusTimeMs = 0;
+        mutable std::vector<uint32> _cachedOnlineGuids;
+        mutable uint32 _lastCandidateScanMs = 0;
         uint64 _nextAssignmentId = 1;
         QueryCallbackProcessor _queryProcessor;
+        AsyncCallbackProcessor<TransactionCallback> _transactionProcessor;
+        uint32 _pendingDbWrites = 0;
+        uint32 _releasingTimerMs = 0;
+        bool _releasingDirty = false;
         uint64 _dataGeneration = 0;
         struct PendingAdmission
         {

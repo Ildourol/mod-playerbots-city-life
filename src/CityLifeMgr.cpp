@@ -313,7 +313,7 @@ namespace CityLife
         _enableInteractions = sConfigMgr->GetOption<bool>("CityLife.Interactions.Enable", false);
         _enablePlayerTrading = sConfigMgr->GetOption<bool>("CityLife.Interactions.PlayerTrading", false);
         _enableBuyFood = sConfigMgr->GetOption<bool>("CityLife.Interactions.BuyFood", false);
-        _blockAchievements = sConfigMgr->GetOption<bool>("CityLife.Achievements.BlockAchievements", true);
+        _blockAchievements = sConfigMgr->GetOption<bool>("CityLife.Achievements.BlockAchievements", false);
 
         // Advanced Micro-Behaviors (Ported from mod-city-bots)
         _alternatingDistricts = sConfigMgr->GetOption<bool>("CityLife.AlternatingDistricts.Enable", true);
@@ -389,9 +389,13 @@ namespace CityLife
     {
         CancelAdmissions();
         std::vector<Hub> hubs;
-        QueryResult hubResult = WorldDatabase.Query(
-            "SELECT id,name,enabled,team,min_level,max_level,map_id,default_population,priority "
-            "FROM city_life_hub ORDER BY priority DESC,id ASC");
+
+        bool hasZoneId = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_hub` LIKE 'zone_id'") != nullptr;
+        std::string hubQuery = hasZoneId
+            ? "SELECT id,name,enabled,team,min_level,max_level,map_id,default_population,priority,zone_id FROM city_life_hub ORDER BY priority DESC,id ASC"
+            : "SELECT id,name,enabled,team,min_level,max_level,map_id,default_population,priority FROM city_life_hub ORDER BY priority DESC,id ASC";
+
+        QueryResult hubResult = WorldDatabase.Query(hubQuery);
         if (hubResult)
         {
             do
@@ -408,30 +412,38 @@ namespace CityLife
                 hub.DefaultPopulation = fields[7].Get<uint32>();
                 hub.Priority = fields[8].Get<uint32>();
 
-                // Known Zone mapping
+                if (hasZoneId)
+                    hub.ZoneId = fields[9].Get<uint32>();
+                else
+                    hub.ZoneId = 0;
+
+                // Known Zone mapping fallback if zone_id was not explicitly configured
                 std::string lowerName = Lower(hub.Name);
-                if (lowerName == "stormwind" || lowerName == "stormwindgate")
-                    hub.ZoneId = 1519;
-                else if (lowerName == "orgrimmar" || lowerName == "orgrimmargate")
-                    hub.ZoneId = 1637;
-                else if (lowerName == "ironforge")
-                    hub.ZoneId = 1537;
-                else if (lowerName == "undercity")
-                    hub.ZoneId = 1497;
-                else if (lowerName == "darnassus")
-                    hub.ZoneId = 1657;
-                else if (lowerName == "thunderbluff")
-                    hub.ZoneId = 1638;
-                else if (lowerName == "exodar")
-                    hub.ZoneId = 3557;
-                else if (lowerName == "silvermoon")
-                    hub.ZoneId = 3487;
-                else if (lowerName == "shattrath")
-                    hub.ZoneId = 3703;
-                else if (lowerName == "dalaran")
-                    hub.ZoneId = 4395;
-                else if (lowerName.find("goldshire") != std::string::npos)
-                    hub.ZoneId = 12;
+                if (hub.ZoneId == 0)
+                {
+                    if (lowerName == "stormwind" || lowerName == "stormwindgate")
+                        hub.ZoneId = 1519;
+                    else if (lowerName == "orgrimmar" || lowerName == "orgrimmargate")
+                        hub.ZoneId = 1637;
+                    else if (lowerName == "ironforge")
+                        hub.ZoneId = 1537;
+                    else if (lowerName == "undercity")
+                        hub.ZoneId = 1497;
+                    else if (lowerName == "darnassus")
+                        hub.ZoneId = 1657;
+                    else if (lowerName == "thunderbluff")
+                        hub.ZoneId = 1638;
+                    else if (lowerName == "exodar")
+                        hub.ZoneId = 3557;
+                    else if (lowerName == "silvermoon")
+                        hub.ZoneId = 3487;
+                    else if (lowerName == "shattrath")
+                        hub.ZoneId = 3703;
+                    else if (lowerName == "dalaran")
+                        hub.ZoneId = 4395;
+                    else if (lowerName.find("goldshire") != std::string::npos)
+                        hub.ZoneId = 12;
+                }
 
                 hub.DuelHub = (lowerName.find("gate") != std::string::npos || lowerName.find("duel") != std::string::npos);
                 hub.SocialHub = (lowerName == "goldshire");
@@ -453,9 +465,10 @@ namespace CityLife
         }
 
         // Check if extended columns exist in city_life_spot
-        bool hasExtendedColumns = false;
-        if (WorldDatabase.Query("SHOW COLUMNS FROM `city_life_spot` LIKE 'poi_type'"))
-            hasExtendedColumns = true;
+        bool hasPoiType = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_spot` LIKE 'poi_type'") != nullptr;
+        bool hasDistrict = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_spot` LIKE 'district'") != nullptr;
+        bool hasPartner = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_spot` LIKE 'partner_spot_id'") != nullptr;
+        bool hasExtendedColumns = hasPoiType && hasDistrict && hasPartner;
 
         std::string spotQuery = hasExtendedColumns
             ? "SELECT id,hub_id,name,category,x,y,z,o,radius,weight,poi_type,district,partner_spot_id FROM city_life_spot WHERE enabled=1 ORDER BY hub_id,id"
@@ -501,15 +514,29 @@ namespace CityLife
 
         {
             std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
-            _zoneToHubId.clear();
+            _zoneToHubIds.clear();
             for (Hub const& h : hubs)
             {
                 if (h.ZoneId != 0)
-                    _zoneToHubId[h.ZoneId] = h.Id;
+                    _zoneToHubIds[h.ZoneId].push_back(h.Id);
             }
         }
 
         _hubs.swap(hubs);
+
+        // Recompute per-hub resident counts
+        _hubResidentCounts.clear();
+        for (Resident const& r : _residents)
+            ++_hubResidentCounts[r.HubId];
+
+        // Release residents belonging to hubs that were disabled or deleted during reload
+        for (auto const& resident : _residents)
+        {
+            Hub* hub = FindHub(resident.HubId);
+            if (!hub || !hub->Enabled)
+                ReleaseResident(resident, true);
+        }
+
         LOG_INFO("module", "[CityLife] Loaded {} hubs. {} active residents.", _hubs.size(), _residents.size());
         return !_hubs.empty();
     }
@@ -685,10 +712,14 @@ namespace CityLife
         {
             uint32 now = GameTimeSeconds();
             std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
-            for (Hub const& hub : _hubs)
+            for (uint32 zoneId : activeRealPlayerZones)
             {
-                if (hub.ZoneId != 0 && activeRealPlayerZones.find(hub.ZoneId) != activeRealPlayerZones.end())
-                    _hubLastRealPlayerTime[hub.Id] = now;
+                auto it = _zoneToHubIds.find(zoneId);
+                if (it != _zoneToHubIds.end())
+                {
+                    for (uint32 hubId : it->second)
+                        _hubLastRealPlayerTime[hubId] = now;
+                }
             }
         }
 
@@ -716,6 +747,10 @@ namespace CityLife
 
         if (it != _residents.end())
         {
+            auto countIt = _hubResidentCounts.find(it->HubId);
+            if (countIt != _hubResidentCounts.end() && countIt->second > 0)
+                --countIt->second;
+
             ReleaseResident(*it, false); // Do not return-teleport away from group or master
             _residents.erase(it);
 
@@ -727,17 +762,20 @@ namespace CityLife
     std::vector<BotCandidate> Manager::LoadCandidates(Hub const& hub, uint32 poolCount)
     {
         std::vector<BotCandidate> candidates;
-        std::vector<uint32> onlineGuids;
+        uint32 nowMs = GameTimeMS();
+        if (_cachedOnlineGuids.empty() || (nowMs - _lastCandidateScanMs > 5000))
         {
+            _cachedOnlineGuids.clear();
             std::shared_lock<std::shared_mutex> playerLock(*HashMapHolder<Player>::GetLock());
             HashMapHolder<Player>::MapType const& players = ObjectAccessor::GetPlayers();
-            onlineGuids.reserve(players.size());
+            _cachedOnlineGuids.reserve(players.size());
             for (auto const& pair : players)
                 if (pair.second)
-                    onlineGuids.push_back(pair.second->GetGUID().GetCounter());
+                    _cachedOnlineGuids.push_back(pair.second->GetGUID().GetCounter());
+            _lastCandidateScanMs = nowMs;
         }
 
-        if (onlineGuids.empty())
+        if (_cachedOnlineGuids.empty())
             return candidates;
 
         // Smart Hybrid Dynamic QueryLimit:
@@ -759,12 +797,12 @@ namespace CityLife
         uint32 candidateTarget = std::min<uint32>(dynamicCeiling, std::max<uint32>(20, deficit * 5));
 
         // 3. Rotational sampling across online bots
-        size_t n = onlineGuids.size();
+        size_t n = _cachedOnlineGuids.size();
         size_t offset = urand(0, static_cast<uint32>(n - 1));
 
         for (size_t i = 0; i < n; ++i)
         {
-            uint32 guidLow = onlineGuids[(offset + i) % n];
+            uint32 guidLow = _cachedOnlineGuids[(offset + i) % n];
             Player* player = FindPlayer(guidLow);
             if (!player || player->GetLevel() < hub.MinLevel || player->GetLevel() > hub.MaxLevel)
                 continue;
@@ -1093,8 +1131,8 @@ namespace CityLife
 
     uint32 Manager::CountResidents(uint32 hubId) const
     {
-        return static_cast<uint32>(std::count_if(_residents.begin(), _residents.end(),
-            [&](Resident const& resident) { return resident.HubId == hubId; }));
+        auto it = _hubResidentCounts.find(hubId);
+        return it != _hubResidentCounts.end() ? it->second : 0;
     }
 
     uint32 Manager::CurrentTimeMultiplier() const
@@ -1174,9 +1212,13 @@ namespace CityLife
             return;
 
         std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
-        auto it = _zoneToHubId.find(zoneId);
-        if (it != _zoneToHubId.end())
-            _hubLastRealPlayerTime[it->second] = GameTimeSeconds();
+        auto it = _zoneToHubIds.find(zoneId);
+        if (it != _zoneToHubIds.end())
+        {
+            uint32 now = GameTimeSeconds();
+            for (uint32 hubId : it->second)
+                _hubLastRealPlayerTime[hubId] = now;
+        }
     }
 
     void Manager::OnPlayerLogin(Player* player)
@@ -1185,9 +1227,13 @@ namespace CityLife
             return;
 
         std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
-        auto it = _zoneToHubId.find(player->GetZoneId());
-        if (it != _zoneToHubId.end())
-            _hubLastRealPlayerTime[it->second] = GameTimeSeconds();
+        auto it = _zoneToHubIds.find(player->GetZoneId());
+        if (it != _zoneToHubIds.end())
+        {
+            uint32 now = GameTimeSeconds();
+            for (uint32 hubId : it->second)
+                _hubLastRealPlayerTime[hubId] = now;
+        }
     }
 
     void Manager::OnPlayerLogout(Player* player)
@@ -1422,6 +1468,13 @@ namespace CityLife
         resident.OriginalZ = player->GetPositionZ();
         resident.OriginalO = player->GetOrientation();
         AssignSpot(resident, hub, *spot, true);
+        if (!Movement::ValidateCityDestination(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, spot->PoiType == CityPoiType::Dock))
+        {
+            if (_debug)
+                LOG_WARN("module", "[CityLife] AdmitResident: Spot '{}/{}' rejected by ValidateCityDestination.", hub.Name, spot->Name);
+            return false;
+        }
+
         uint32 now = GameTimeSeconds();
         resident.NextMoveAt = now + urand(_relocateMinSeconds, _relocateMaxSeconds);
         resident.NextEmoteAtMs = GameTimeMS() + urand(_emoteMinSeconds, _emoteMaxSeconds) * 1000;
@@ -1434,6 +1487,7 @@ namespace CityLife
             sRandomPlayerbotMgr.ScheduleTeleport(bot.GuidLow, std::max(ReservationSeconds, hub.ResidenceSeconds + MINUTE));
         Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, true);
         _residents.push_back(resident);
+        ++_hubResidentCounts[resident.HubId];
         ++_changesThisTick;
         return true;
     }
@@ -1498,18 +1552,26 @@ namespace CityLife
             return;
         if (std::none_of(_releasingResidents.begin(), _releasingResidents.end(),
             [&](ReleasingResident const& pending) { return pending.Actor.Token.Generation == resident.Token.Generation; }))
-            _releasingResidents.push_back({ resident, returnHome });
+        {
+            _releasingResidents.push_back({ resident, returnHome, GameTimeSeconds(), 0 });
+            _releasingDirty = true;
+        }
     }
 
-    void Manager::ProcessReleasingResidents()
+    void Manager::ProcessReleasingResidents(bool isShutdown)
     {
+        uint32 now = GameTimeSeconds();
         auto pending = _releasingResidents.begin();
         while (pending != _releasingResidents.end())
         {
             Resident& resident = pending->Actor;
+            ++pending->Attempts;
             bool owned = PlayerbotsLife::ValidateLeaseState(resident.Token, PlayerbotsLife::LeaseState::Releasing);
             Player* player = owned ? FindPlayer(resident.Bot.GuidLow) : nullptr;
-            bool relinquish = !owned || !player || IsHumanControlled(player);
+            bool isHuman = player && IsHumanControlled(player);
+            bool timedOut = (pending->ReleaseStartedAt != 0 && (now - pending->ReleaseStartedAt >= 30)) || (pending->Attempts > 15);
+            bool relinquish = !owned || !player || isHuman || isShutdown || timedOut;
+
             if (!relinquish)
             {
                 if (!player->IsInWorld() || player->IsBeingTeleported() || _changesThisTick >= _maxChangesPerTick)
@@ -1533,6 +1595,22 @@ namespace CityLife
                         resident.OriginalY, resident.OriginalZ, resident.OriginalO, true);
                 ++_changesThisTick;
             }
+            else
+            {
+                // Terminal fallback / takeover / timeout / shutdown path
+                if (player && !isHuman)
+                {
+                    Activities::CancelCityDuel(player, "residence-ended");
+                    Activities::CrowdClearAfk(player);
+                    Activities::CrowdReleaseChat(player, resident);
+                    RestoreResidentState(player, resident);
+                    if (!player->IsInCombat() && !player->IsBeingTeleported() && pending->ReturnHome && player->IsAlive())
+                        Movement::MoveToPosition(player, resident.OriginalMap, resident.OriginalX,
+                            resident.OriginalY, resident.OriginalZ, resident.OriginalO, true);
+                }
+                // If human-controlled: DO NOT touch player strategies, state, or teleports!
+            }
+
             if (owned)
                 PlayerbotsLife::ReleaseLeaseExact(resident.Token);
             if (resident.DuelStagingSlotId)
@@ -1549,13 +1627,15 @@ namespace CityLife
         for (Resident const& resident : _residents)
             ReleaseResident(resident, returnHome && _returnBots);
         _residents.clear();
+        _hubResidentCounts.clear();
     }
 
     void Manager::Shutdown()
     {
         ++_dataGeneration;
         ReleaseAll(true);
-        ProcessReleasingResidents();
+        ProcessReleasingResidents(true);
+        _releasingResidents.clear();
     }
 
     void Manager::RemoveUnavailableResidents()
@@ -1571,6 +1651,10 @@ namespace CityLife
                 !player->IsInCombat() && !player->IsBeingTeleported() && !isDueling;
             if (!hub || !IsResidentUsable(player, isDueling) || residenceExpired)
             {
+                auto countIt = _hubResidentCounts.find(resident->HubId);
+                if (countIt != _hubResidentCounts.end() && countIt->second > 0)
+                    --countIt->second;
+
                 ReleaseResident(*resident, residenceExpired && _returnBots);
                 resident = _residents.erase(resident);
             }
@@ -1638,6 +1722,9 @@ namespace CityLife
                 if (found == _residents.rend())
                     break;
                 auto eraseAt = std::next(found).base();
+                auto countIt = _hubResidentCounts.find(eraseAt->HubId);
+                if (countIt != _hubResidentCounts.end() && countIt->second > 0)
+                    --countIt->second;
                 ReleaseResident(*eraseAt, _returnBots);
                 _residents.erase(eraseAt);
                 ++changes;
@@ -2017,6 +2104,7 @@ namespace CityLife
     void Manager::Update(uint32 diff)
     {
         _queryProcessor.ProcessReadyCallbacks();
+        _transactionProcessor.ProcessReadyCallbacks();
         PlayerbotsLife::ResolveAdmissionRequests(GameTimeSeconds());
         bool managementTick = _timerMs <= diff;
         if (managementTick)
@@ -2026,7 +2114,15 @@ namespace CityLife
         }
         else
             _timerMs -= diff;
-        ProcessReleasingResidents();
+
+        _releasingTimerMs += diff;
+        if (_releasingDirty || _releasingTimerMs >= 250)
+        {
+            _releasingTimerMs = 0;
+            _releasingDirty = false;
+            ProcessReleasingResidents(false);
+        }
+
         if (!_enable || !_databaseReady)
             return;
         if (_startupElapsedMs < _startupDelaySeconds * IN_MILLISECONDS)
@@ -2036,6 +2132,9 @@ namespace CityLife
         }
         if (managementTick)
         {
+            uint32 nowSec = GameTimeSeconds();
+            PlayerbotsLife::ScavengeStaleLeases(nowSec);
+            PlayerbotsLife::PruneRealPlayerCooldowns(nowSec);
             MaintainPopulation();
             MaintainResidents();
         }
@@ -2126,30 +2225,25 @@ namespace CityLife
         bool pvpActive = (activeModules & PlayerbotsLife::ModuleSystemFlags::MODULE_PVP_LIFE) != 0;
         bool artActive = (activeModules & PlayerbotsLife::ModuleSystemFlags::MODULE_ARTISANS) != 0;
 
-        auto& registry = PlayerbotsLife::GetReservationRegistry();
-        std::lock_guard<std::mutex> lock(registry.Mutex);
-        uint32 clCount = 0;
-        uint32 pvpCount = 0;
-        uint32 artCount = 0;
-        for (auto const& [guid, owner] : registry.Owners)
-        {
-            if (owner == PlayerbotsLife::ReservationOwner::CityLife)
-                ++clCount;
-            else if (owner == PlayerbotsLife::ReservationOwner::PvPLife)
-                ++pvpCount;
-            else if (owner == PlayerbotsLife::ReservationOwner::Artisans)
-                ++artCount;
-        }
+        auto snapshot = PlayerbotsLife::GetCooperationSnapshot(GameTimeSeconds());
 
         handler->PSendSysMessage("=== Playerbots Life Coexistence Status ===");
         handler->PSendSysMessage("Active Modules: CityLife={} | PvPLife={} | Artisans={}",
             clActive ? "ACTIVE" : "INACTIVE",
             pvpActive ? "ACTIVE" : "INACTIVE",
             artActive ? "ACTIVE" : "INACTIVE");
+        handler->PSendSysMessage("Protocol Version: {} | Registry Address: {:p}",
+            PlayerbotsLife::GetReservationProtocolVersion(),
+            PlayerbotsLife::GetReservationRegistryAddress());
         handler->PSendSysMessage("Active Reservations: CityLife={} | PvPLife={} | Artisans={} (Total: {})",
-            clCount, pvpCount, artCount, registry.Owners.size());
-        handler->PSendSysMessage("Effective Protection: Shared Registry ACTIVE (Generation: {})",
-            registry.NextGeneration);
+            snapshot.CityLifeCount, snapshot.PvPLifeCount, snapshot.ArtisansCount, snapshot.TotalReserved);
+        handler->PSendSysMessage("Lease States: Active={} | Provisional={} | Releasing={} (Current Gen: {})",
+            snapshot.ActiveCount, snapshot.ProvisionalCount, snapshot.ReleasingCount, snapshot.CurrentGeneration);
+        handler->PSendSysMessage("Stale Leases: Stale Provisional={} (oldest={}s) | Stale Releasing={} (oldest={}s)",
+            snapshot.StaleProvisionalCount, snapshot.OldestProvisionalAgeSec,
+            snapshot.StaleReleasingCount, snapshot.OldestReleasingAgeSec);
+        handler->PSendSysMessage("Arbitration: Waiting Admissions={} | Unacked Grants={} | Active Duel Slots={}",
+            snapshot.WaitingAdmissions, snapshot.UnacknowledgedGrants, snapshot.ActiveDuelSlots);
     }
 
     bool Manager::HandleDebugCommand(ChatHandler* handler, std::vector<std::string> const& args)
@@ -2164,6 +2258,80 @@ namespace CityLife
             return true;
         }
 
+        return false;
+    }
+
+    void Manager::QueueMutation(std::string const& sql, uint32 gmGuidLow, std::string const& successMsg)
+    {
+        if (_pendingDbWrites >= 32)
+        {
+            LOG_WARN("module", "[CityLife] Database write queue full; GM mutation skipped.");
+            if (gmGuidLow)
+            {
+                if (Player* gm = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(gmGuidLow)))
+                    ChatHandler(gm->GetSession()).PSendSysMessage("City Life: Edit queue full; try again shortly.");
+            }
+            return;
+        }
+
+        WorldDatabaseTransaction transaction = WorldDatabase.BeginTransaction();
+        transaction->Append(sql);
+        ++_pendingDbWrites;
+        uint64 gen = _dataGeneration;
+
+        _transactionProcessor.AddCallback(WorldDatabase.AsyncCommitTransaction(transaction)).AfterComplete(
+            [this, gen, gmGuidLow, successMsg](bool success)
+            {
+                --_pendingDbWrites;
+                if (!success)
+                {
+                    LOG_ERROR("module", "[CityLife] GM database mutation transaction failed.");
+                    if (gmGuidLow)
+                    {
+                        if (Player* gm = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(gmGuidLow)))
+                            ChatHandler(gm->GetSession()).PSendSysMessage("City Life: Database edit failed.");
+                    }
+                    return;
+                }
+
+                if (gen == _dataGeneration && _pendingDbWrites == 0)
+                    LoadData();
+
+                if (gmGuidLow && !successMsg.empty())
+                {
+                    if (Player* gm = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(gmGuidLow)))
+                        ChatHandler(gm->GetSession()).PSendSysMessage("{}", successMsg);
+                }
+            });
+    }
+
+    bool Manager::ValidateResidentAction(Player* bot, Resident const& resident) const
+    {
+        if (!bot || !bot->IsInWorld() || bot->IsBeingTeleported())
+            return false;
+
+        if (resident.Token.Generation == 0)
+            return false;
+
+        if (!PlayerbotsLife::ValidateActiveLease(resident.Token))
+            return false;
+
+        if (IsHumanControlled(bot))
+            return false;
+
+        return true;
+    }
+
+    bool Manager::IsResidentInSyntheticActivity(uint32 guidLow) const
+    {
+        for (Resident const& resident : _residents)
+        {
+            if (resident.Bot.GuidLow == guidLow)
+            {
+                return resident.Activity == CitizenActivity::Duel ||
+                       resident.Activity == CitizenActivity::Conversation;
+            }
+        }
         return false;
     }
 
@@ -2194,17 +2362,33 @@ namespace CityLife
             }
 
             Player* gm = handler->GetSession()->GetPlayer();
+            uint32 zoneId = gm->GetZoneId();
+            uint32 gmGuidLow = gm->GetGUID().GetCounter();
             std::string name = args[2];
             WorldDatabase.EscapeString(name);
-            WorldDatabase.DirectExecute(
-                "INSERT INTO city_life_hub "
-                "(name,enabled,team,min_level,max_level,map_id,default_population,priority) "
-                "VALUES ('{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE enabled=1,team=VALUES(team),"
-                "min_level=VALUES(min_level),max_level=VALUES(max_level),map_id=VALUES(map_id),"
-                "default_population=VALUES(default_population),priority=VALUES(priority)",
-                name, static_cast<uint32>(team), minLevel, maxLevel, gm->GetMapId(), population, priority);
-            LoadData();
-            handler->PSendSysMessage("City Life: Saved hub '{}' at GM position.", name);
+
+            bool hasZoneId = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_hub` LIKE 'zone_id'") != nullptr;
+            std::string sql = hasZoneId
+                ? Acore::String::Format(
+                    "INSERT INTO city_life_hub "
+                    "(name,enabled,team,min_level,max_level,map_id,zone_id,default_population,priority) "
+                    "VALUES ('{}',1,{},{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE enabled=1,team=VALUES(team),"
+                    "min_level=VALUES(min_level),max_level=VALUES(max_level),map_id=VALUES(map_id),zone_id=VALUES(zone_id),"
+                    "default_population=VALUES(default_population),priority=VALUES(priority)",
+                    name, static_cast<uint32>(team), minLevel, maxLevel, gm->GetMapId(), zoneId, population, priority)
+                : Acore::String::Format(
+                    "INSERT INTO city_life_hub "
+                    "(name,enabled,team,min_level,max_level,map_id,default_population,priority) "
+                    "VALUES ('{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE enabled=1,team=VALUES(team),"
+                    "min_level=VALUES(min_level),max_level=VALUES(max_level),map_id=VALUES(map_id),"
+                    "default_population=VALUES(default_population),priority=VALUES(priority)",
+                    name, static_cast<uint32>(team), minLevel, maxLevel, gm->GetMapId(), population, priority);
+
+            std::string successMsg = Acore::String::Format(
+                "City Life: Saved hub '{}' (zone {}). Add spots with '.citylife spot add {} <name> <category>' before population can appear.",
+                name, zoneId, name);
+            QueueMutation(sql, gmGuidLow, successMsg);
+            handler->PSendSysMessage("City Life: Queued hub '{}' save.", name);
             return true;
         }
 
@@ -2212,10 +2396,12 @@ namespace CityLife
         {
             std::string name = args[2];
             WorldDatabase.EscapeString(name);
-            WorldDatabase.DirectExecute("UPDATE city_life_hub SET enabled={} WHERE name='{}'",
+            uint32 gmGuidLow = (handler->GetSession() && handler->GetSession()->GetPlayer()) ? handler->GetSession()->GetPlayer()->GetGUID().GetCounter() : 0;
+            std::string sql = Acore::String::Format("UPDATE city_life_hub SET enabled={} WHERE name='{}'",
                 operation == "enable" ? 1 : 0, name);
-            LoadData();
-            handler->PSendSysMessage("City Life: Hub '{}' {}.", name, operation == "enable" ? "enabled" : "disabled");
+            std::string successMsg = Acore::String::Format("City Life: Hub '{}' {}.", name, operation == "enable" ? "enabled" : "disabled");
+            QueueMutation(sql, gmGuidLow, successMsg);
+            handler->PSendSysMessage("City Life: Queued hub '{}' update.", name);
             return true;
         }
 
@@ -2226,11 +2412,11 @@ namespace CityLife
                 return false;
             std::string name = args[2];
             WorldDatabase.EscapeString(name);
-            WorldDatabase.DirectExecute(
-                "UPDATE city_life_hub SET default_population={} WHERE name='{}'", population, name);
-            LoadData();
-            handler->PSendSysMessage(
-                "City Life: Set DB population for hub '{}' to {}.", name, population);
+            uint32 gmGuidLow = (handler->GetSession() && handler->GetSession()->GetPlayer()) ? handler->GetSession()->GetPlayer()->GetGUID().GetCounter() : 0;
+            std::string sql = Acore::String::Format("UPDATE city_life_hub SET default_population={} WHERE name='{}'", population, name);
+            std::string successMsg = Acore::String::Format("City Life: Set DB population for hub '{}' to {}.", name, population);
+            QueueMutation(sql, gmGuidLow, successMsg);
+            handler->PSendSysMessage("City Life: Queued hub '{}' population update.", name);
             return true;
         }
         return false;
@@ -2264,6 +2450,20 @@ namespace CityLife
         {
             if (args.size() < 5 || !handler->GetSession() || !handler->GetSession()->GetPlayer())
                 return false;
+            Player* gm = handler->GetSession()->GetPlayer();
+            if (hub->MapId != gm->GetMapId())
+            {
+                handler->PSendSysMessage("City Life: Cannot add spot to hub '{}' (map {}) while GM is on map {}.",
+                    hubName, hub->MapId, gm->GetMapId());
+                return true;
+            }
+            if (!std::isfinite(gm->GetPositionX()) || !std::isfinite(gm->GetPositionY()) ||
+                !std::isfinite(gm->GetPositionZ()) || !std::isfinite(gm->GetOrientation()))
+            {
+                handler->PSendSysMessage("City Life: GM coordinates are not finite.");
+                return true;
+            }
+
             uint32 weight = 100;
             float radius = 4.0f;
             if ((args.size() > 5 && !ParseUInt(args[5], weight)) ||
@@ -2272,20 +2472,32 @@ namespace CityLife
             weight = std::max<uint32>(1, weight);
             radius = std::clamp(radius, 0.0f, 30.0f);
 
-            Player* gm = handler->GetSession()->GetPlayer();
             std::string spotName = args[3];
             std::string category = args[4];
             WorldDatabase.EscapeString(spotName);
             WorldDatabase.EscapeString(category);
-            WorldDatabase.DirectExecute(
-                "INSERT INTO city_life_spot (hub_id,name,category,enabled,x,y,z,o,radius,weight) "
-                "VALUES ({},'{}','{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE category=VALUES(category),"
-                "enabled=1,x=VALUES(x),y=VALUES(y),z=VALUES(z),o=VALUES(o),radius=VALUES(radius),"
-                "weight=VALUES(weight)",
-                hubId, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
-                gm->GetOrientation(), radius, weight);
-            LoadData();
-            handler->PSendSysMessage("City Life: Saved spot '{}/{}' at GM position.", hubName, spotName);
+            uint32 gmGuidLow = gm->GetGUID().GetCounter();
+
+            bool hasPoiType = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_spot` LIKE 'poi_type'") != nullptr;
+            std::string sql = hasPoiType
+                ? Acore::String::Format(
+                    "INSERT INTO city_life_spot (hub_id,name,category,enabled,x,y,z,o,radius,weight,poi_type,district) "
+                    "VALUES ({},'{}','{}',1,{},{},{},{},{},{},{},'{}') ON DUPLICATE KEY UPDATE category=VALUES(category),"
+                    "enabled=1,x=VALUES(x),y=VALUES(y),z=VALUES(z),o=VALUES(o),radius=VALUES(radius),"
+                    "weight=VALUES(weight),poi_type=VALUES(poi_type),district=VALUES(district)",
+                    hubId, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
+                    gm->GetOrientation(), radius, weight, static_cast<uint32>(CategoryToPoiType(category)), category)
+                : Acore::String::Format(
+                    "INSERT INTO city_life_spot (hub_id,name,category,enabled,x,y,z,o,radius,weight) "
+                    "VALUES ({},'{}','{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE category=VALUES(category),"
+                    "enabled=1,x=VALUES(x),y=VALUES(y),z=VALUES(z),o=VALUES(o),radius=VALUES(radius),"
+                    "weight=VALUES(weight)",
+                    hubId, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
+                    gm->GetOrientation(), radius, weight);
+
+            std::string successMsg = Acore::String::Format("City Life: Saved spot '{}/{}' at GM position.", hubName, spotName);
+            QueueMutation(sql, gmGuidLow, successMsg);
+            handler->PSendSysMessage("City Life: Queued spot '{}/{}' save.", hubName, spotName);
             return true;
         }
 
@@ -2293,10 +2505,11 @@ namespace CityLife
         {
             std::string spotName = args[3];
             WorldDatabase.EscapeString(spotName);
-            WorldDatabase.DirectExecute("DELETE FROM city_life_spot WHERE hub_id={} AND name='{}'",
-                hubId, spotName);
-            LoadData();
-            handler->PSendSysMessage("City Life: Deleted spot '{}/{}'.", hubName, spotName);
+            uint32 gmGuidLow = (handler->GetSession() && handler->GetSession()->GetPlayer()) ? handler->GetSession()->GetPlayer()->GetGUID().GetCounter() : 0;
+            std::string sql = Acore::String::Format("DELETE FROM city_life_spot WHERE hub_id={} AND name='{}'", hubId, spotName);
+            std::string successMsg = Acore::String::Format("City Life: Deleted spot '{}/{}'.", hubName, spotName);
+            QueueMutation(sql, gmGuidLow, successMsg);
+            handler->PSendSysMessage("City Life: Queued spot '{}/{}' deletion.", hubName, spotName);
             return true;
         }
         return false;
