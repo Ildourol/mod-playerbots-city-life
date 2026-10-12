@@ -348,7 +348,7 @@ namespace CityLife
             return true;
         }
 
-        bool ValidateCityDestination(Player* bot, uint32 mapId, float x, float y, float z, float o, bool allowWater)
+        bool ValidateCityDestination(Player* bot, uint32 mapId, float x, float y, float z, float o, bool /*allowWater*/)
         {
             if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(o))
                 return false;
@@ -375,21 +375,6 @@ namespace CityLife
 
                 if (bot->GetMap() && bot->GetMap()->Instanceable())
                     return false;
-
-                if (!allowWater)
-                {
-                    uint32 phase = bot->GetPhaseMask();
-                    float ch = bot->GetCollisionHeight();
-                    if (map->IsInWater(phase, x, y, z, ch))
-                        return false;
-                }
-
-                if (bot->GetMapId() == mapId)
-                {
-                    float groundZ = map->GetHeight(bot->GetPhaseMask(), x, y, z, true, 50.0f);
-                    if (groundZ != INVALID_HEIGHT && std::abs(groundZ - z) > 30.0f)
-                        return false;
-                }
             }
 
             return true;
