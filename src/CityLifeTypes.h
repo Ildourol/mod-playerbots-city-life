@@ -249,6 +249,24 @@ namespace CityLife
         uint32 DuelStagingSlotId = 0;
         ResidentMutationJournal Journal;
     };
+
+    struct DuelStep
+    {
+        uint32 HubId = 0;
+        uint64 Generation = 0;
+        uint64 PairId = 0;
+        PlayerbotsLife::LeaseToken ChallengerToken;
+        PlayerbotsLife::LeaseToken TargetToken;
+        uint32 ChallengerGuidLow = 0;
+        uint32 TargetGuidLow = 0;
+        std::string ChallengerName;
+        std::string TargetName;
+        uint32 ExecuteAt = 0;
+        uint8 RetryCount = 0;
+        bool TargetIsRealPlayer = false;
+        bool RequestSent = false;
+        uint32 RequestDeadline = 0;
+    };
 }
 
 #endif

@@ -14,12 +14,14 @@
 #include "PlayerScript.h"
 #include "ScriptMgr.h"
 #include "SharedDefines.h"
+#include "Spell.h"
 #include "WorldPacket.h"
 #include "WorldScript.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -97,6 +99,19 @@ namespace PlayerbotsLife
         return out;
     }
 
+    class ILifeTelemetryProvider
+    {
+    public:
+        virtual ~ILifeTelemetryProvider() = default;
+        virtual std::string GetModuleName() const = 0; // "city" or "pvp"
+        virtual void BuildCapacity(uint32& target, uint32& active, uint32& pending, uint32& releasing) = 0;
+        virtual void BuildRoster(std::vector<std::string>& outRecords) = 0;
+        virtual void BuildHubsOrZones(std::string& outPayload) = 0;
+        virtual void BuildQueues(std::string& outPayload) = 0;
+        virtual uint32 GetLiveBotCensus() const = 0;
+        virtual bool BuildBotDetail(uint32 guidLow, std::string& outPayload) { return false; }
+    };
+
     class LifeTelemetryBridge
     {
     public:
@@ -104,6 +119,31 @@ namespace PlayerbotsLife
         {
             static LifeTelemetryBridge instance;
             return instance;
+        }
+
+        void RegisterProvider(std::shared_ptr<ILifeTelemetryProvider> provider)
+        {
+            if (!provider)
+                return;
+            std::lock_guard<std::mutex> lock(_mutex);
+            for (auto it = _providers.begin(); it != _providers.end(); ++it)
+            {
+                if ((*it)->GetModuleName() == provider->GetModuleName())
+                {
+                    *it = provider;
+                    return;
+                }
+            }
+            _providers.push_back(provider);
+        }
+
+        void UnregisterProvider(std::string const& moduleName)
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _providers.erase(std::remove_if(_providers.begin(), _providers.end(),
+                [&](std::shared_ptr<ILifeTelemetryProvider> const& p) {
+                    return p && p->GetModuleName() == moduleName;
+                }), _providers.end());
         }
 
         void OnPlayerLogout(uint32 guidLow)
@@ -161,6 +201,80 @@ namespace PlayerbotsLife
             }
         }
 
+        void SendFullState(Player* player, uint32 reqId = 0)
+        {
+            if (!player || !player->GetSession())
+                return;
+
+            std::string capPayload = BuildCapacityPayload();
+            SendTelemetryMessage(player, "CAPACITY", "main", reqId, "1", capPayload);
+
+            SendRosterSnapshot(player, reqId);
+            SendCatalogs(player, reqId);
+        }
+
+        void SendRosterSnapshot(Player* player, uint32 reqId = 0)
+        {
+            if (!player || !player->GetSession())
+                return;
+
+            std::vector<std::string> records;
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                for (auto const& p : _providers)
+                {
+                    if (p)
+                        p->BuildRoster(records);
+                }
+            }
+
+            if (records.empty())
+                return;
+
+            std::string payload;
+            for (std::string const& rec : records)
+            {
+                payload += rec;
+                payload += "\n";
+            }
+
+            SendTelemetryMessage(player, "ROSTER", "main", reqId, "1", payload);
+        }
+
+        void SendCatalogs(Player* player, uint32 reqId = 0)
+        {
+            if (!player || !player->GetSession())
+                return;
+
+            std::string hubsPayload;
+            std::string zonesPayload;
+            std::string queuesPayload;
+
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                for (auto const& p : _providers)
+                {
+                    if (!p) continue;
+                    if (p->GetModuleName() == "city")
+                    {
+                        p->BuildHubsOrZones(hubsPayload);
+                    }
+                    else if (p->GetModuleName() == "pvp")
+                    {
+                        p->BuildHubsOrZones(zonesPayload);
+                        p->BuildQueues(queuesPayload);
+                    }
+                }
+            }
+
+            if (!hubsPayload.empty())
+                SendTelemetryMessage(player, "HUBS", "main", reqId, "1", hubsPayload);
+            if (!zonesPayload.empty())
+                SendTelemetryMessage(player, "ZONES", "main", reqId, "1", zonesPayload);
+            if (!queuesPayload.empty())
+                SendTelemetryMessage(player, "QUEUES", "main", reqId, "1", queuesPayload);
+        }
+
         bool HandleClientMessage(Player* player, std::string const& rawFrame)
         {
             if (!player || !player->GetSession())
@@ -198,15 +312,18 @@ namespace PlayerbotsLife
 
             if (kind == "HELLO")
             {
+                {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    _subscribers.insert(player->GetGUID().GetCounter());
+                }
+
                 std::string tier = (player->GetSession()->GetSecurity() > SEC_PLAYER) ? "admin" : "player";
                 std::string welcomePayload = "all|" + tier + "|" +
-                    std::to_string(GameTime::GetGameTimeMS()) + "|" +
-                    std::to_string(GameTime::GetGameTime());
+                    std::to_string(GameTime::GetGameTimeMS().count()) + "|" +
+                    std::to_string(GameTime::GetGameTime().count());
                 SendTelemetryMessage(player, "WELCOME", "main", reqId, "1", welcomePayload);
 
-                CooperationSnapshot snap = GetCooperationSnapshot(GameTimeSeconds());
-                std::string capPayload = BuildCapacityPayload(snap);
-                SendTelemetryMessage(player, "CAPACITY", "main", 0, "1", capPayload);
+                SendFullState(player, 0);
                 return true;
             }
             else if (kind == "PING")
@@ -220,15 +337,70 @@ namespace PlayerbotsLife
                     std::lock_guard<std::mutex> lock(_mutex);
                     _subscribers.insert(player->GetGUID().GetCounter());
                 }
-                CooperationSnapshot snap = GetCooperationSnapshot(GameTimeSeconds());
-                std::string capPayload = BuildCapacityPayload(snap);
-                SendTelemetryMessage(player, "CAPACITY", "main", reqId, "1", capPayload);
+                SendFullState(player, reqId);
                 return true;
             }
             else if (kind == "UNSUBSCRIBE")
             {
                 std::lock_guard<std::mutex> lock(_mutex);
                 _subscribers.erase(player->GetGUID().GetCounter());
+                return true;
+            }
+            else if (kind == "QUERY_BOT")
+            {
+                uint64 rawGuid = 0;
+                if (unescapedBody.rfind("0x", 0) == 0 || unescapedBody.rfind("0X", 0) == 0)
+                    rawGuid = std::strtoull(unescapedBody.c_str(), nullptr, 16);
+                else
+                    rawGuid = std::strtoull(unescapedBody.c_str(), nullptr, 10);
+
+                uint32 guidLow = static_cast<uint32>(rawGuid & 0xFFFFFFFF);
+                std::string detailPayload;
+                bool found = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    for (auto const& p : _providers)
+                    {
+                        if (p && p->BuildBotDetail(guidLow, detailPayload))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!found)
+                {
+                    Player* bot = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(guidLow));
+                    if (bot)
+                    {
+                        char guidBuf[32];
+                        std::snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", static_cast<unsigned long long>(bot->GetGUID().GetRawValue()));
+                        std::string targetName = "None";
+                        uint32 targetHp = 100;
+                        if (Unit* vic = bot->GetVictim())
+                        {
+                            targetName = vic->GetName();
+                            targetHp = static_cast<uint32>(vic->GetHealthPct());
+                        }
+                        std::string spellName = "None";
+                        if (Spell* sp = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+                            if (sp->GetSpellInfo() && sp->GetSpellInfo()->SpellName[0])
+                                spellName = sp->GetSpellInfo()->SpellName[0];
+
+                        char buf[512];
+                        std::snprintf(buf, sizeof(buf), "%s|World|Active|%s|%u|%s|None|None",
+                            guidBuf, targetName.c_str(), targetHp, spellName.c_str());
+                        detailPayload = buf;
+                        found = true;
+                    }
+                }
+
+                if (found && !detailPayload.empty())
+                {
+                    SendTelemetryMessage(player, "BOT_DETAIL", stream, reqId, session, detailPayload);
+                }
                 return true;
             }
 
@@ -250,8 +422,7 @@ namespace PlayerbotsLife
                 activeSubs.assign(_subscribers.begin(), _subscribers.end());
             }
 
-            CooperationSnapshot snap = GetCooperationSnapshot(GameTimeSeconds());
-            std::string capPayload = BuildCapacityPayload(snap);
+            std::string capPayload = BuildCapacityPayload();
 
             for (uint32 guidLow : activeSubs)
             {
@@ -263,29 +434,62 @@ namespace PlayerbotsLife
                     continue;
                 }
                 SendTelemetryMessage(player, "CAPACITY", "main", 0, "1", capPayload);
+                SendRosterSnapshot(player, 0);
             }
         }
 
     private:
         LifeTelemetryBridge() = default;
 
-        static std::string BuildCapacityPayload(CooperationSnapshot const& snap)
+        std::string BuildCapacityPayload()
         {
-            uint32 freeCapacity = 0;
-            return std::to_string(snap.TotalReserved) + "|" +
-                   std::to_string(snap.CityLifeCount) + "|" +
-                   std::to_string(snap.ActiveCount) + "|" +
-                   std::to_string(snap.ProvisionalCount) + "|" +
-                   std::to_string(snap.ReleasingCount) + "|" +
-                   std::to_string(snap.PvPLifeCount) + "|" +
-                   std::to_string(snap.ActiveCount) + "|" +
-                   std::to_string(snap.ProvisionalCount) + "|" +
-                   std::to_string(snap.ReleasingCount) + "|" +
+            uint32 censusTotal = 0;
+            uint32 cityTarget = 0, cityActive = 0, cityPending = 0, cityReleasing = 0;
+            uint32 pvpTarget = 0, pvpActive = 0, pvpPending = 0, pvpReleasing = 0;
+
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                for (auto const& p : _providers)
+                {
+                    if (!p) continue;
+                    uint32 c = p->GetLiveBotCensus();
+                    if (c > censusTotal)
+                        censusTotal = c;
+
+                    if (p->GetModuleName() == "city")
+                        p->BuildCapacity(cityTarget, cityActive, cityPending, cityReleasing);
+                    else if (p->GetModuleName() == "pvp")
+                        p->BuildCapacity(pvpTarget, pvpActive, pvpPending, pvpReleasing);
+                }
+            }
+
+            // Fallback to CooperationSnapshot if providers not yet loaded
+            if (cityTarget == 0 && cityActive == 0 && pvpTarget == 0 && pvpActive == 0)
+            {
+                CooperationSnapshot snap = GetCooperationSnapshot(static_cast<uint32>(GameTime::GetGameTime().count()));
+                cityActive = snap.CityLifeCount;
+                pvpActive = snap.PvPLifeCount;
+                censusTotal = snap.TotalReserved;
+            }
+
+            uint32 totalReserved = cityActive + pvpActive;
+            uint32 freeCapacity = (censusTotal > totalReserved) ? (censusTotal - totalReserved) : 0;
+
+            return std::to_string(censusTotal) + "|" +
+                   std::to_string(cityTarget) + "|" +
+                   std::to_string(cityActive) + "|" +
+                   std::to_string(cityPending) + "|" +
+                   std::to_string(cityReleasing) + "|" +
+                   std::to_string(pvpTarget) + "|" +
+                   std::to_string(pvpActive) + "|" +
+                   std::to_string(pvpPending) + "|" +
+                   std::to_string(pvpReleasing) + "|" +
                    std::to_string(freeCapacity);
         }
 
         std::mutex _mutex;
         std::unordered_set<uint32> _subscribers;
+        std::vector<std::shared_ptr<ILifeTelemetryProvider>> _providers;
         uint32 _broadcastTimerMs{0};
     };
 

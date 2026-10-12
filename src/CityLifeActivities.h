@@ -61,6 +61,8 @@ namespace CityLife
 
         void ExecuteWallPatrol(Resident& resident, Player* bot, Hub const& hub, uint32 now);
 
+        void ExecuteReleaseCycle(Resident& resident, Player* bot, Hub const& hub, uint32 now);
+
         void ExecuteRandomEmote(Resident& resident, Player* bot, Hub const& hub, uint32 now);
 
         // Safe State Cleaners

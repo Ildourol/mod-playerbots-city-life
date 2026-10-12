@@ -438,6 +438,17 @@ namespace CityLife
                  !PlayerbotsLife::ValidateLeaseState(resident->Token, PlayerbotsLife::LeaseState::Releasing)))
                 return;
             bot->DuelComplete(DUEL_INTERRUPTED);
+            if (resident->DuelStagingSlotId != 0)
+            {
+                PlayerbotsLife::ReleaseDuelStagingSlot(resident->DuelStagingSlotId, PlayerbotsLife::ReservationOwner::CityLife);
+                resident->DuelStagingSlotId = 0;
+            }
+            if (resident->DuelPairId != 0)
+            {
+                PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident->DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
+                resident->DuelPairId = 0;
+            }
+            sCityLifeMgr.RestoreCityStrategies(bot, *resident);
             resident->DuelState = DuelPairState::None;
             resident->CoreDuelArbiter = 0;
             LOG_DEBUG("module", "[CityLife] Canceled owned duel for {}: {}", bot->GetName(), reason);
@@ -509,6 +520,7 @@ namespace CityLife
             if (bot->duel->State == DUEL_STATE_COUNTDOWN)
             {
                 resident.DuelState = DuelPairState::Countdown;
+                sCityLifeMgr.ApplyDuelStrategies(bot);
                 if (tacticalRange && IsRangedDueler(bot))
                     MoveToRangedDuelDistance(bot, resident, opponent, anchor, leashRadius);
                 return;
@@ -517,6 +529,7 @@ namespace CityLife
             if (bot->duel->State == DUEL_STATE_IN_PROGRESS)
             {
                 resident.DuelState = DuelPairState::InProgress;
+                sCityLifeMgr.ApplyDuelStrategies(bot);
                 float dist = bot->GetDistance(opponent);
 
                 if (!tacticalRange)
@@ -582,6 +595,7 @@ namespace CityLife
                     resident.DuelPairId = 0;
                 }
                 // Native duel completion owns combat and resource recovery.
+                sCityLifeMgr.RestoreCityStrategies(bot, resident);
                 resident.DuelPartnerGuid = 0;
                 resident.CoreDuelArbiter = 0;
                 resident.DuelState = DuelPairState::None;
@@ -610,6 +624,7 @@ namespace CityLife
                         PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident.DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
                         resident.DuelPairId = 0;
                     }
+                    sCityLifeMgr.RestoreCityStrategies(bot, resident);
                     resident.DuelMeetingSet = false;
                     resident.DuelPartnerGuid = 0;
                     resident.DuelState = DuelPairState::None;
@@ -631,6 +646,7 @@ namespace CityLife
                         PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident.DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
                         resident.DuelPairId = 0;
                     }
+                    sCityLifeMgr.RestoreCityStrategies(bot, resident);
                     resident.DuelMeetingSet = false;
                     resident.DuelPartnerGuid = 0;
                     resident.DuelState = DuelPairState::None;
@@ -650,19 +666,12 @@ namespace CityLife
                     bot->SetFacingToObject(opponent);
                     if (resident.DuelInitiator)
                     {
-                        if (::IsRealPlayer(opponent))
-                        {
-                            uint32 nowSec = GameTimeSeconds();
-                            if (!PlayerbotsLife::TryClaimRealPlayerChallenge(resident.DuelPartnerGuid, nowSec, duelCooldownSec))
-                                return;
-
-                            if (bot->CastSpell(opponent, 7266, false) != SPELL_CAST_OK)
-                                PlayerbotsLife::ReleaseRealPlayerChallengeClaim(resident.DuelPartnerGuid, nowSec + duelCooldownSec);
-                        }
-                        else
-                        {
-                            bot->CastSpell(opponent, 7266, false);
-                        }
+                        PlayerbotsLife::LeaseToken oppToken;
+                        if (Resident* oppResident = sCityLifeMgr.FindResident(resident.DuelPartnerGuid))
+                            oppToken = oppResident->Token;
+                        sCityLifeMgr.ScheduleDuel(hub.Id, resident.DuelPairId, resident.Token, oppToken,
+                            bot->GetGUID().GetCounter(), resident.DuelPartnerGuid,
+                            bot->GetName(), opponent->GetName(), 0, ::IsRealPlayer(opponent));
                     }
                 }
                 else
@@ -765,19 +774,12 @@ namespace CityLife
 
                 bot->SetFacingToObject(opponent);
                 resident.DuelState = DuelPairState::Challenged;
-                if (::IsRealPlayer(opponent))
-                {
-                    uint32 nowSec = GameTimeSeconds();
-                    if (!PlayerbotsLife::TryClaimRealPlayerChallenge(oppGuidLow, nowSec, duelCooldownSec))
-                        return;
-
-                    if (bot->CastSpell(opponent, 7266, false) != SPELL_CAST_OK)
-                        PlayerbotsLife::ReleaseRealPlayerChallengeClaim(oppGuidLow, nowSec + duelCooldownSec);
-                }
-                else
-                {
-                    bot->CastSpell(opponent, 7266, false);
-                }
+                PlayerbotsLife::LeaseToken oppToken;
+                if (Resident* oppResident = sCityLifeMgr.FindResident(oppGuidLow))
+                    oppToken = oppResident->Token;
+                sCityLifeMgr.ScheduleDuel(hub.Id, resident.DuelPairId, resident.Token, oppToken,
+                    bot->GetGUID().GetCounter(), oppGuidLow,
+                    bot->GetName(), opponent->GetName(), 0, ::IsRealPlayer(opponent));
             }
         }
 
@@ -815,23 +817,30 @@ namespace CityLife
 
             Movement::DismountIfMounted(bot);
 
-            if (bot->GetSkillValue(SKILL_FISHING) == 0)
-                return;
+            if (resident.Sitting || bot->getStandState() != UNIT_STAND_STATE_STAND)
+            {
+                bot->SetStandState(UNIT_STAND_STATE_STAND);
+                resident.Sitting = false;
+            }
 
-            Item* mainItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
-            if (!mainItem || !mainItem->GetTemplate() ||
-                mainItem->GetTemplate()->Class != ITEM_CLASS_WEAPON ||
-                mainItem->GetTemplate()->SubClass != ITEM_SUBCLASS_WEAPON_FISHING_POLE)
-                return;
-
-            uint32 fishingSpell = 7620;
-            if (!bot->HasSpell(fishingSpell))
-                return;
+            Spot const* spot = sCityLifeMgr.FindSpot(resident.HubId, resident.SpotId);
+            if (spot && std::abs(bot->GetOrientation() - spot->O) > 0.05f)
+                bot->SetFacingTo(spot->O);
 
             if (bot->IsNonMeleeSpellCast(false))
                 return;
 
-            bot->CastSpell(bot, fishingSpell, false);
+            // Visual fishing loop: perform the native fishing animation without requiring
+            // learned fishing skill, spell learning, or modifying character inventory/equipment.
+            if (resident.NextEmoteAtMs <= now)
+            {
+                if (roll_chance_i(30))
+                    bot->HandleEmoteCommand(EMOTE_ONESHOT_FISHING);
+                else
+                    bot->HandleEmoteCommand(EMOTE_STATE_FISHING);
+
+                resident.NextEmoteAtMs = now + urand(10, 20) * 1000;
+            }
         }
 
         void ExecuteInnDance(Resident& resident, Player* bot, Hub const& hub, uint32 now,
@@ -845,7 +854,7 @@ namespace CityLife
 
             Movement::DismountIfMounted(bot);
 
-            if (resident.Sitting)
+            if (resident.Sitting || bot->getStandState() != UNIT_STAND_STATE_STAND)
             {
                 bot->SetStandState(UNIT_STAND_STATE_STAND);
                 resident.Sitting = false;
@@ -853,11 +862,11 @@ namespace CityLife
 
             bot->HandleEmoteCommand(EMOTE_STATE_DANCE);
 
-            // Greet nearby real player
-            if (enableSay)
+            // Greet nearby real player or shout tavern dialogue
+            if (enableSay && now >= resident.LastSayMs + sayCooldownSec * 1000)
             {
                 Player* nearby = FindNearbyRealPlayer(bot, 6.0f);
-                if (nearby && now >= resident.LastSayMs + sayCooldownSec * 1000)
+                if (nearby)
                 {
                     bot->SetFacingToObject(nearby);
                     resident.LastSayMs = now;
@@ -868,6 +877,17 @@ namespace CityLife
                         "Hi, {}!"
                     };
                     bot->Say(Acore::StringFormat(greetings[urand(0, 3)], nearby->GetName()), LANG_UNIVERSAL);
+                }
+                else if (roll_chance_i(20))
+                {
+                    resident.LastSayMs = now;
+                    static char const* phrases[] = {
+                        "Welcome to the tavern!",
+                        "Best inn around!",
+                        "Another round for the house!",
+                        "Dance like nobody's watching!"
+                    };
+                    bot->Say(phrases[urand(0, 3)], LANG_UNIVERSAL);
                 }
             }
         }
@@ -916,7 +936,22 @@ namespace CityLife
 
             if (!resident.Sitting)
             {
-                bot->SetStandState(UNIT_STAND_STATE_SIT);
+                bool nearChair = false;
+                std::list<GameObject*> gameobjects;
+                AnyGameObjectInObjectRangeCheck check(bot, 3.5f);
+                Acore::GameObjectListSearcher<AnyGameObjectInObjectRangeCheck> searcher(bot, gameobjects, check);
+                Cell::VisitObjects(bot, searcher, 3.5f);
+                for (GameObject* go : gameobjects)
+                {
+                    if (go && go->GetGoType() == GAMEOBJECT_TYPE_CHAIR)
+                    {
+                        bot->SetFacingToObject(go);
+                        nearChair = true;
+                        break;
+                    }
+                }
+
+                bot->SetStandState(nearChair ? UNIT_STAND_STATE_SIT_CHAIR : UNIT_STAND_STATE_SIT);
                 resident.Sitting = true;
                 if (hub.SocialHub && roll_chance_i(35))
                     bot->HandleEmoteCommand(EMOTE_ONESHOT_CHEER);
@@ -937,11 +972,30 @@ namespace CityLife
 
             if (!resident.Sitting)
             {
-                bot->SetStandState(UNIT_STAND_STATE_SIT);
+                bool nearChair = false;
+                std::list<GameObject*> gameobjects;
+                AnyGameObjectInObjectRangeCheck check(bot, 3.5f);
+                Acore::GameObjectListSearcher<AnyGameObjectInObjectRangeCheck> searcher(bot, gameobjects, check);
+                Cell::VisitObjects(bot, searcher, 3.5f);
+                for (GameObject* go : gameobjects)
+                {
+                    if (go && go->GetGoType() == GAMEOBJECT_TYPE_CHAIR)
+                    {
+                        bot->SetFacingToObject(go);
+                        nearChair = true;
+                        break;
+                    }
+                }
+
+                bot->SetStandState(nearChair ? UNIT_STAND_STATE_SIT_CHAIR : UNIT_STAND_STATE_SIT);
                 resident.Sitting = true;
             }
 
-            if (roll_chance_i(30))
+            if (roll_chance_i(35))
+            {
+                bot->HandleEmoteCommand(EMOTE_ONESHOT_EAT_NO_SHEATHE);
+            }
+            else if (roll_chance_i(25))
             {
                 bot->HandleEmoteCommand(EMOTE_ONESHOT_APPLAUD);
             }
@@ -1037,6 +1091,42 @@ namespace CityLife
             if (!Movement::IsAtSpot(bot, *spot, 4.0f))
             {
                 Movement::MoveToPosition(bot, hub.MapId, spot->X, spot->Y, spot->Z, spot->O, false);
+            }
+            else if (spot->PartnerSpotId != 0 && now >= resident.NextMoveAt)
+            {
+                if (Spot const* partner = sCityLifeMgr.FindSpot(resident.HubId, spot->PartnerSpotId))
+                {
+                    sCityLifeMgr.AssignSpot(resident, hub, *partner, false);
+                    resident.NextMoveAt = GameTimeSeconds() + urand(15, 35);
+                    Movement::MoveToPosition(bot, hub.MapId, partner->X, partner->Y, partner->Z, partner->O, false);
+                }
+            }
+        }
+
+        void ExecuteReleaseCycle(Resident& resident, Player* bot, Hub const& hub, uint32 now)
+        {
+            if (!bot || !bot->IsInWorld())
+                return;
+
+            if (!sCityLifeMgr.ValidateResidentAction(bot, resident))
+                return;
+
+            Spot const* spot = sCityLifeMgr.FindSpot(resident.HubId, resident.SpotId);
+            if (!spot)
+                return;
+
+            if (!Movement::IsAtSpot(bot, *spot, 3.5f))
+            {
+                if (!bot->isMoving())
+                    Movement::MoveToPosition(bot, hub.MapId, spot->X, spot->Y, spot->Z, spot->O, false);
+                return;
+            }
+
+            Movement::DismountIfMounted(bot);
+
+            if (bot->getStandState() != UNIT_STAND_STATE_SLEEP)
+            {
+                bot->SetStandState(UNIT_STAND_STATE_SLEEP);
             }
         }
 

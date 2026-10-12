@@ -17,6 +17,7 @@
 #include "Chat.h"
 #include "Config.h"
 #include "DatabaseEnv.h"
+#include "DBCStores.h"
 #include "GameTime.h"
 #include "Group.h"
 #include "Log.h"
@@ -24,6 +25,7 @@
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
+#include "Opcodes.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Playerbots.h"
@@ -31,6 +33,10 @@
 #include "Random.h"
 #include "RandomPlayerbotMgr.h"
 #include "SharedDefines.h"
+#include "SocialMgr.h"
+#include "SpellInfo.h"
+#include "SpellMgr.h"
+#include "WorldPacket.h"
 #include "WorldSession.h"
 
 #include <algorithm>
@@ -298,6 +304,8 @@ namespace CityLife
         _duelAllowPlayerChallenge = sConfigMgr->GetOption<bool>("CityLife.Duels.AllowPlayerChallenge", true);
         _duelBotChallengeRealPlayer = sConfigMgr->GetOption<bool>("CityLife.Duels.BotChallengeRealPlayer", true);
         _duelMaxDistance = sConfigMgr->GetOption<float>("CityLife.Duels.MaxDuelDistance", 40.0f);
+        _duelCombatStrategies = sConfigMgr->GetOption<std::string>("CityLife.Duels.CombatStrategies", "+duel,+pvp,+boost");
+        _duelNonCombatStrategies = sConfigMgr->GetOption<std::string>("CityLife.Duels.NonCombatStrategies", "+duel,+pvp,+boost,+stay,-follow,-passive,-grind");
 
         // Movement & Sink Protection
         _mountBetweenPoiChance = std::min<uint32>(100, sConfigMgr->GetOption<uint32>("CityLife.Movement.MountBetweenPoiChance", 90));
@@ -451,8 +459,9 @@ namespace CityLife
                 std::string configPrefix = "CityLife.Hub." + hub.Name;
                 hub.ConfiguredPopulation = sConfigMgr->GetOption<uint32>(
                     configPrefix + ".Population", hub.DefaultPopulation, false);
+                bool defaultEnabled = !hub.DuelHub; // Default duel hubs (e.g. StormwindGate, OrgrimmarGate) to off unless explicitly enabled
                 bool configEnabled = sConfigMgr->GetOption<bool>(
-                    configPrefix + ".Enable", true, false);
+                    configPrefix + ".Enable", defaultEnabled, false);
                 hub.Enabled = hub.Enabled && configEnabled;
                 hub.UseTimeScaling = sConfigMgr->GetOption<bool>(configPrefix + ".TimeScaling", true, false);
                 hub.ResidenceSeconds = sConfigMgr->GetOption<uint32>(
@@ -839,6 +848,13 @@ namespace CityLife
         return found == _hubs.end() ? nullptr : &*found;
     }
 
+    Hub const* Manager::FindHub(uint32 hubId) const
+    {
+        auto found = std::find_if(_hubs.begin(), _hubs.end(),
+            [&](Hub const& hub) { return hub.Id == hubId; });
+        return found == _hubs.end() ? nullptr : &*found;
+    }
+
     Hub* Manager::FindHub(std::string const& name)
     {
         std::string lowered = Lower(name);
@@ -865,6 +881,16 @@ namespace CityLife
                     if (spot.Id == spotId)
                         return &spot;
             }
+        }
+        return nullptr;
+    }
+
+    Spot const* Manager::FindInnBedSpot(Hub const& hub) const
+    {
+        for (Spot const& spot : hub.Spots)
+        {
+            if (spot.PoiType == CityPoiType::InnBed || spot.Category == "inn" || spot.Category == "bed")
+                return &spot;
         }
         return nullptr;
     }
@@ -1124,6 +1150,14 @@ namespace CityLife
                 return _actWallWalking ? CitizenActivity::WalkCityWalls : CitizenActivity::Idle;
             case CityPoiType::DuelRing:
                 return _actDuelWatching ? CitizenActivity::WatchDuels : CitizenActivity::Idle;
+            case CityPoiType::Bank:
+                if (_actCrowdScenes && _crowdEnable)
+                    return CitizenActivity::CrowdSocial;
+                return _actAuctionHouse ? CitizenActivity::VisitAuctionHouse : CitizenActivity::Idle;
+            case CityPoiType::Plaza:
+                return _actPlazaSocial ? CitizenActivity::PlazaSocial : CitizenActivity::Idle;
+            case CityPoiType::Dock:
+                return _actFishing ? CitizenActivity::FishAtDocks : (_actRoaming ? CitizenActivity::WanderDistrict : CitizenActivity::Idle);
             default:
                 return _actRoaming ? CitizenActivity::WanderDistrict : CitizenActivity::RandomEmote;
         }
@@ -1350,14 +1384,41 @@ namespace CityLife
         return nullptr;
     }
 
+    Resident const* Manager::FindResident(uint32 guidLow) const
+    {
+        for (Resident const& r : _residents)
+        {
+            if (r.Bot.GuidLow == guidLow)
+                return &r;
+        }
+        for (ReleasingResident const& pending : _releasingResidents)
+            if (pending.Actor.Bot.GuidLow == guidLow)
+                return &pending.Actor;
+        return nullptr;
+    }
+
     Player* Manager::FindDuelOpponent(Hub const& hub, Player* bot, float centerX, float centerY, float radius)
     {
         if (!bot)
             return nullptr;
 
+        uint32 nowSec = GameTimeSeconds();
+        auto botDuelCd = _botDuelCooldown.find(bot->GetGUID().GetCounter());
+        if (botDuelCd != _botDuelCooldown.end() && botDuelCd->second > nowSec)
+            return nullptr;
+
         for (Resident const& r : _residents)
         {
             if (r.HubId != hub.Id || r.Bot.GuidLow == bot->GetGUID().GetCounter())
+                continue;
+
+            auto duelCd = _botDuelCooldown.find(r.Bot.GuidLow);
+            if (duelCd != _botDuelCooldown.end() && duelCd->second > nowSec)
+                continue;
+
+            if (std::any_of(_duelQueue.begin(), _duelQueue.end(), [&](DuelStep const& step) {
+                return step.ChallengerGuidLow == r.Bot.GuidLow || step.TargetGuidLow == r.Bot.GuidLow;
+            }))
                 continue;
 
             if (r.Activity == CitizenActivity::Duel && r.DuelPartnerGuid == 0 &&
@@ -1380,7 +1441,10 @@ namespace CityLife
 
         if (_duelAllowPlayerChallenge && _duelBotChallengeRealPlayer && bot->GetMap())
         {
-            uint32 nowSec = GameTimeSeconds();
+            auto botChallCd = _botChallengeCooldown.find(bot->GetGUID().GetCounter());
+            if (botChallCd != _botChallengeCooldown.end() && botChallCd->second > nowSec)
+                return nullptr;
+
             for (auto const& pRef : bot->GetMap()->GetPlayers())
             {
                 Player* opponent = pRef.GetSource();
@@ -1391,6 +1455,15 @@ namespace CityLife
                     continue;
 
                 uint32 oppGuidLow = opponent->GetGUID().GetCounter();
+                auto pCd = _playerChallengeCooldown.find(oppGuidLow);
+                if (pCd != _playerChallengeCooldown.end() && pCd->second > nowSec)
+                    continue;
+
+                if (std::any_of(_duelQueue.begin(), _duelQueue.end(), [&](DuelStep const& step) {
+                    return step.TargetGuidLow == oppGuidLow;
+                }))
+                    continue;
+
                 if (!PlayerbotsLife::CanChallengeRealPlayer(oppGuidLow, nowSec))
                     continue;
 
@@ -1550,6 +1623,9 @@ namespace CityLife
     {
         if (!PlayerbotsLife::BeginRelease(resident.Token))
             return;
+        _duelQueue.erase(std::remove_if(_duelQueue.begin(), _duelQueue.end(),
+            [&](DuelStep const& s) { return s.ChallengerGuidLow == resident.Bot.GuidLow || s.TargetGuidLow == resident.Bot.GuidLow; }),
+            _duelQueue.end());
         if (std::none_of(_releasingResidents.begin(), _releasingResidents.end(),
             [&](ReleasingResident const& pending) { return pending.Actor.Token.Generation == resident.Token.Generation; }))
         {
@@ -1633,6 +1709,10 @@ namespace CityLife
     void Manager::Shutdown()
     {
         ++_dataGeneration;
+        _duelQueue.clear();
+        _botDuelCooldown.clear();
+        _botChallengeCooldown.clear();
+        _playerChallengeCooldown.clear();
         ReleaseAll(true);
         ProcessReleasingResidents(true);
         _releasingResidents.clear();
@@ -1641,6 +1721,7 @@ namespace CityLife
     void Manager::RemoveUnavailableResidents()
     {
         uint32 now = GameTimeSeconds();
+        uint32 nowMs = GameTimeMS();
         auto resident = _residents.begin();
         while (resident != _residents.end())
         {
@@ -1649,8 +1730,29 @@ namespace CityLife
             bool isDueling = (resident->Activity == CitizenActivity::Duel) || (player && player->duel != nullptr);
             bool residenceExpired = resident->ReleaseAt != 0 && resident->ReleaseAt <= now && player &&
                 !player->IsInCombat() && !player->IsBeingTeleported() && !isDueling;
+
+            // Rest & Sleep Sequence: if expired and not yet resting, transition to ReleaseCycle at inn bed
+            if (residenceExpired && resident->Activity != CitizenActivity::ReleaseCycle && _actReturnToInn && hub)
+            {
+                if (Spot const* restSpot = FindInnBedSpot(*hub))
+                {
+                    resident->Activity = CitizenActivity::ReleaseCycle;
+                    resident->ActivityStartMs = nowMs;
+                    resident->ReleaseAt = now + 20; // 20s rest in bed before final release
+                    AssignSpot(*resident, *hub, *restSpot, false);
+                    Movement::MoveToPosition(player, hub->MapId, restSpot->X, restSpot->Y, restSpot->Z, restSpot->O, false);
+                    ++resident;
+                    continue;
+                }
+            }
+
             if (!hub || !IsResidentUsable(player, isDueling) || residenceExpired)
             {
+                if (player && player->getStandState() == UNIT_STAND_STATE_SLEEP)
+                    player->SetStandState(UNIT_STAND_STATE_STAND);
+                if (player)
+                    player->HandleEmoteCommand(EMOTE_ONESHOT_NONE);
+
                 auto countIt = _hubResidentCounts.find(resident->HubId);
                 if (countIt != _hubResidentCounts.end() && countIt->second > 0)
                     --countIt->second;
@@ -1799,6 +1901,13 @@ namespace CityLife
         if (!spot)
             return;
 
+        if (resident.Sitting || player->getStandState() != UNIT_STAND_STATE_STAND)
+        {
+            player->SetStandState(UNIT_STAND_STATE_STAND);
+            resident.Sitting = false;
+        }
+        player->HandleEmoteCommand(EMOTE_ONESHOT_NONE);
+
         AssignSpot(resident, hub, *spot, false);
         resident.NextMoveAt = GameTimeSeconds() + urand(_relocateMinSeconds, _relocateMaxSeconds);
 
@@ -1843,6 +1952,26 @@ namespace CityLife
             {
                 Activities::DriveActiveDuel(resident, player, *hub, nowMs, _duelMaxDistance, _duelTacticalRange);
                 continue;
+            }
+
+            // Post-duel recovery if state was active/challenged and duel pointer has cleared
+            if (!player->duel && resident.DuelState != DuelPairState::None && !resident.DuelMeetingSet)
+            {
+                if (resident.DuelStagingSlotId != 0)
+                {
+                    PlayerbotsLife::ReleaseDuelStagingSlot(resident.DuelStagingSlotId, PlayerbotsLife::ReservationOwner::CityLife);
+                    resident.DuelStagingSlotId = 0;
+                }
+                if (resident.DuelPairId != 0)
+                {
+                    PlayerbotsLife::ReleaseDuelStagingSlotByPair(resident.DuelPairId, PlayerbotsLife::ReservationOwner::CityLife);
+                    resident.DuelPairId = 0;
+                }
+                RestoreCityStrategies(player, resident);
+                resident.DuelPartnerGuid = 0;
+                resident.CoreDuelArbiter = 0;
+                resident.DuelState = DuelPairState::None;
+                resident.DuelCooldownUntilMs = nowMs + _duelCooldownSec * 1000;
             }
 
             if (player->IsInCombat() || player->duel || player->IsInFlight())
@@ -1894,6 +2023,7 @@ namespace CityLife
             }
 
             if (resident.AtSpot && resident.ActivityDurationMs &&
+                resident.Activity != CitizenActivity::ReleaseCycle &&
                 nowMs - resident.ActivityStartMs >= resident.ActivityDurationMs &&
                 !player->IsNonMeleeSpellCast(false) && !resident.ChatPartnerGuid &&
                 resident.CrowdPhaseState == CrowdPhase::Linger)
@@ -1905,6 +2035,7 @@ namespace CityLife
                         player->SetStandState(UNIT_STAND_STATE_STAND);
                         resident.Sitting = false;
                     }
+                    player->HandleEmoteCommand(EMOTE_ONESHOT_NONE);
                     resident.Role = DetermineRole(*hub, *spot, resident.Bot);
                     resident.Activity = ChooseInitialActivity(resident.Role, *spot);
                     resident.ActivityStartMs = nowMs;
@@ -1912,7 +2043,7 @@ namespace CityLife
                 }
             }
             // Roaming relocation
-            if (_roaming && _actRoaming && !resident.Stationary && resident.NextMoveAt <= nowSec)
+            if (_roaming && _actRoaming && !resident.Stationary && resident.Activity != CitizenActivity::ReleaseCycle && resident.NextMoveAt <= nowSec)
             {
                 RelocateResident(resident, *hub);
                 continue;
@@ -1973,6 +2104,16 @@ namespace CityLife
                 case CitizenActivity::BuyFood:
                     if (_actFoodVendor)
                         Activities::ExecuteBuyFood(resident, player, *hub, nowMs, _enableInteractions && _enableBuyFood);
+                    break;
+                case CitizenActivity::WanderDistrict:
+                    if (_actRoaming && resident.NextEmoteAtMs <= nowMs)
+                    {
+                        Activities::ExecuteRandomEmote(resident, player, *hub, nowMs);
+                        resident.NextEmoteAtMs = nowMs + urand(_emoteMinSeconds, _emoteMaxSeconds) * 1000;
+                    }
+                    break;
+                case CitizenActivity::ReleaseCycle:
+                    Activities::ExecuteReleaseCycle(resident, player, *hub, nowMs);
                     break;
                 case CitizenActivity::RandomEmote:
                 default:
@@ -2130,6 +2271,7 @@ namespace CityLife
             _startupElapsedMs += diff;
             return;
         }
+        ProcessDuelQueue();
         if (managementTick)
         {
             uint32 nowSec = GameTimeSeconds();
@@ -2329,7 +2471,8 @@ namespace CityLife
             if (resident.Bot.GuidLow == guidLow)
             {
                 return resident.Activity == CitizenActivity::Duel ||
-                       resident.Activity == CitizenActivity::Conversation;
+                       resident.Activity == CitizenActivity::PlazaSocial ||
+                       resident.Activity == CitizenActivity::CrowdSocial;
             }
         }
         return false;
@@ -2369,14 +2512,14 @@ namespace CityLife
 
             bool hasZoneId = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_hub` LIKE 'zone_id'") != nullptr;
             std::string sql = hasZoneId
-                ? Acore::String::Format(
+                ? Acore::StringFormat(
                     "INSERT INTO city_life_hub "
                     "(name,enabled,team,min_level,max_level,map_id,zone_id,default_population,priority) "
                     "VALUES ('{}',1,{},{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE enabled=1,team=VALUES(team),"
                     "min_level=VALUES(min_level),max_level=VALUES(max_level),map_id=VALUES(map_id),zone_id=VALUES(zone_id),"
                     "default_population=VALUES(default_population),priority=VALUES(priority)",
                     name, static_cast<uint32>(team), minLevel, maxLevel, gm->GetMapId(), zoneId, population, priority)
-                : Acore::String::Format(
+                : Acore::StringFormat(
                     "INSERT INTO city_life_hub "
                     "(name,enabled,team,min_level,max_level,map_id,default_population,priority) "
                     "VALUES ('{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE enabled=1,team=VALUES(team),"
@@ -2384,7 +2527,7 @@ namespace CityLife
                     "default_population=VALUES(default_population),priority=VALUES(priority)",
                     name, static_cast<uint32>(team), minLevel, maxLevel, gm->GetMapId(), population, priority);
 
-            std::string successMsg = Acore::String::Format(
+            std::string successMsg = Acore::StringFormat(
                 "City Life: Saved hub '{}' (zone {}). Add spots with '.citylife spot add {} <name> <category>' before population can appear.",
                 name, zoneId, name);
             QueueMutation(sql, gmGuidLow, successMsg);
@@ -2397,9 +2540,9 @@ namespace CityLife
             std::string name = args[2];
             WorldDatabase.EscapeString(name);
             uint32 gmGuidLow = (handler->GetSession() && handler->GetSession()->GetPlayer()) ? handler->GetSession()->GetPlayer()->GetGUID().GetCounter() : 0;
-            std::string sql = Acore::String::Format("UPDATE city_life_hub SET enabled={} WHERE name='{}'",
+            std::string sql = Acore::StringFormat("UPDATE city_life_hub SET enabled={} WHERE name='{}'",
                 operation == "enable" ? 1 : 0, name);
-            std::string successMsg = Acore::String::Format("City Life: Hub '{}' {}.", name, operation == "enable" ? "enabled" : "disabled");
+            std::string successMsg = Acore::StringFormat("City Life: Hub '{}' {}.", name, operation == "enable" ? "enabled" : "disabled");
             QueueMutation(sql, gmGuidLow, successMsg);
             handler->PSendSysMessage("City Life: Queued hub '{}' update.", name);
             return true;
@@ -2413,8 +2556,8 @@ namespace CityLife
             std::string name = args[2];
             WorldDatabase.EscapeString(name);
             uint32 gmGuidLow = (handler->GetSession() && handler->GetSession()->GetPlayer()) ? handler->GetSession()->GetPlayer()->GetGUID().GetCounter() : 0;
-            std::string sql = Acore::String::Format("UPDATE city_life_hub SET default_population={} WHERE name='{}'", population, name);
-            std::string successMsg = Acore::String::Format("City Life: Set DB population for hub '{}' to {}.", name, population);
+            std::string sql = Acore::StringFormat("UPDATE city_life_hub SET default_population={} WHERE name='{}'", population, name);
+            std::string successMsg = Acore::StringFormat("City Life: Set DB population for hub '{}' to {}.", name, population);
             QueueMutation(sql, gmGuidLow, successMsg);
             handler->PSendSysMessage("City Life: Queued hub '{}' population update.", name);
             return true;
@@ -2480,14 +2623,14 @@ namespace CityLife
 
             bool hasPoiType = WorldDatabase.Query("SHOW COLUMNS FROM `city_life_spot` LIKE 'poi_type'") != nullptr;
             std::string sql = hasPoiType
-                ? Acore::String::Format(
+                ? Acore::StringFormat(
                     "INSERT INTO city_life_spot (hub_id,name,category,enabled,x,y,z,o,radius,weight,poi_type,district) "
                     "VALUES ({},'{}','{}',1,{},{},{},{},{},{},{},'{}') ON DUPLICATE KEY UPDATE category=VALUES(category),"
                     "enabled=1,x=VALUES(x),y=VALUES(y),z=VALUES(z),o=VALUES(o),radius=VALUES(radius),"
                     "weight=VALUES(weight),poi_type=VALUES(poi_type),district=VALUES(district)",
                     hubId, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
                     gm->GetOrientation(), radius, weight, static_cast<uint32>(CategoryToPoiType(category)), category)
-                : Acore::String::Format(
+                : Acore::StringFormat(
                     "INSERT INTO city_life_spot (hub_id,name,category,enabled,x,y,z,o,radius,weight) "
                     "VALUES ({},'{}','{}',1,{},{},{},{},{},{}) ON DUPLICATE KEY UPDATE category=VALUES(category),"
                     "enabled=1,x=VALUES(x),y=VALUES(y),z=VALUES(z),o=VALUES(o),radius=VALUES(radius),"
@@ -2495,7 +2638,7 @@ namespace CityLife
                     hubId, spotName, category, gm->GetPositionX(), gm->GetPositionY(), gm->GetPositionZ(),
                     gm->GetOrientation(), radius, weight);
 
-            std::string successMsg = Acore::String::Format("City Life: Saved spot '{}/{}' at GM position.", hubName, spotName);
+            std::string successMsg = Acore::StringFormat("City Life: Saved spot '{}/{}' at GM position.", hubName, spotName);
             QueueMutation(sql, gmGuidLow, successMsg);
             handler->PSendSysMessage("City Life: Queued spot '{}/{}' save.", hubName, spotName);
             return true;
@@ -2506,8 +2649,8 @@ namespace CityLife
             std::string spotName = args[3];
             WorldDatabase.EscapeString(spotName);
             uint32 gmGuidLow = (handler->GetSession() && handler->GetSession()->GetPlayer()) ? handler->GetSession()->GetPlayer()->GetGUID().GetCounter() : 0;
-            std::string sql = Acore::String::Format("DELETE FROM city_life_spot WHERE hub_id={} AND name='{}'", hubId, spotName);
-            std::string successMsg = Acore::String::Format("City Life: Deleted spot '{}/{}'.", hubName, spotName);
+            std::string sql = Acore::StringFormat("DELETE FROM city_life_spot WHERE hub_id={} AND name='{}'", hubId, spotName);
+            std::string successMsg = Acore::StringFormat("City Life: Deleted spot '{}/{}'.", hubName, spotName);
             QueueMutation(sql, gmGuidLow, successMsg);
             handler->PSendSysMessage("City Life: Queued spot '{}/{}' deletion.", hubName, spotName);
             return true;
@@ -2572,5 +2715,647 @@ namespace CityLife
 
         PrintHelp(handler);
         return true;
+    }
+
+    static char const* GetActivityNameString(CitizenActivity act)
+    {
+        switch (act)
+        {
+            case CitizenActivity::LeaveInn: return "LeaveInn";
+            case CitizenActivity::VisitAuctionHouse: return "VisitAuctionHouse";
+            case CitizenActivity::VisitMailbox: return "VisitMailbox";
+            case CitizenActivity::BuyFood: return "BuyFood";
+            case CitizenActivity::WanderDistrict: return "WanderDistrict";
+            case CitizenActivity::SitInTavern: return "SitInTavern";
+            case CitizenActivity::WatchDuels: return "WatchDuels";
+            case CitizenActivity::VisitTrainer: return "VisitTrainer";
+            case CitizenActivity::DrinkInTavern: return "DrinkInTavern";
+            case CitizenActivity::WalkCityWalls: return "WalkCityWalls";
+            case CitizenActivity::ReturnToInn: return "ReturnToInn";
+            case CitizenActivity::ReleaseCycle: return "ReleaseCycle";
+            case CitizenActivity::RandomEmote: return "RandomEmote";
+            case CitizenActivity::FishAtDocks: return "FishAtDocks";
+            case CitizenActivity::Idle: return "Idle";
+            case CitizenActivity::Duel: return "Duel";
+            case CitizenActivity::InnDance: return "InnDance";
+            case CitizenActivity::PlazaSocial: return "PlazaSocial";
+            case CitizenActivity::CrowdSocial: return "CrowdSocial";
+            default: return "Activity";
+        }
+    }
+
+    static char const* GetRoleNameString(CitizenRole role)
+    {
+        switch (role)
+        {
+            case CitizenRole::InnDancer: return "Inn Dancer";
+            case CitizenRole::PlazaTalker: return "Plaza Talker";
+            case CitizenRole::GateDuelist: return "Gate Duelist";
+            case CitizenRole::GoldshireDuelist: return "Goldshire Duelist";
+            case CitizenRole::Fisher: return "Fisher";
+            case CitizenRole::Crowd: return "Crowd";
+            case CitizenRole::Flex:
+            default: return "Citizen";
+        }
+    }
+
+    static std::string ResolveCityAction(Resident const& res, Player* p, Spot const* spot)
+    {
+        if (p)
+        {
+            if (!p->IsAlive())
+                return "Fallen / Dead";
+            if (p->IsBeingTeleported())
+                return "Teleporting";
+        }
+
+        if (res.Activity == CitizenActivity::Duel)
+        {
+            if (res.DuelState == DuelPairState::Active || res.DuelState == DuelPairState::InProgress)
+            {
+                if (p && p->duel && p->duel->Opponent)
+                {
+                    if (p->duel->State == DUEL_STATE_COUNTDOWN)
+                        return "Duel Countdown";
+                    if (Spell* sp = p->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+                        if (sp->GetSpellInfo() && sp->GetSpellInfo()->SpellName[0])
+                            return "Casting " + std::string(sp->GetSpellInfo()->SpellName[0]);
+                    if (Unit* vic = p->GetVictim())
+                        return "Attacking " + vic->GetName();
+                    return "Dueling (" + p->duel->Opponent->GetName() + ")";
+                }
+                return "Duel Engaged";
+            }
+            if (res.DuelState == DuelPairState::Rendezvous)
+                return "Approaching Opponent";
+            if (res.DuelState == DuelPairState::Challenged || res.DuelState == DuelPairState::Countdown)
+                return "Waiting for Duel";
+            return "Preparing Duel";
+        }
+
+        if (res.Activity == CitizenActivity::ReleaseCycle)
+            return "Resting in Bed";
+
+        if (res.Activity == CitizenActivity::FishAtDocks)
+            return "Fishing at Dock";
+
+        if (res.Activity == CitizenActivity::DrinkInTavern)
+            return "Drinking Ale";
+
+        if (res.Activity == CitizenActivity::SitInTavern)
+        {
+            if (res.Sitting)
+                return (p && p->getStandState() == UNIT_STAND_STATE_SIT_CHAIR) ? "Seated on Chair" : "Sitting on Bench";
+            return "Taking a Seat";
+        }
+
+        if (res.Activity == CitizenActivity::InnDance)
+            return "Dancing in Tavern";
+
+        if (res.Activity == CitizenActivity::WalkCityWalls)
+            return "Wall Patrol Node " + std::to_string(res.SpotId);
+
+        if (res.Activity == CitizenActivity::WatchDuels)
+            return "Watching Duels";
+
+        if (res.Activity == CitizenActivity::VisitAuctionHouse)
+            return "Browsing Auctioneer";
+
+        if (res.Activity == CitizenActivity::VisitMailbox)
+            return "Checking Mailbox";
+
+        if (res.Activity == CitizenActivity::VisitTrainer)
+            return "Visiting Class Trainer";
+
+        if (res.Activity == CitizenActivity::BuyFood)
+            return "Purchasing Rations";
+
+        if (res.Activity == CitizenActivity::CrowdSocial)
+        {
+            if (res.ChatPartnerGuid != 0)
+            {
+                Player* partner = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(res.ChatPartnerGuid));
+                return "Talking to " + (partner ? partner->GetName() : "Partner");
+            }
+            if (res.CrowdPhaseState == CrowdPhase::Afk)
+                return "Resting (AFK)";
+            if (res.CrowdPhaseState == CrowdPhase::WanderOut)
+                return "Browsing Counter";
+            if (res.CrowdPhaseState == CrowdPhase::WanderBack)
+                return "Returning to Queue";
+            return "In Social Crowd";
+        }
+
+        if (res.Activity == CitizenActivity::PlazaSocial)
+            return "Plaza Gathering";
+
+        if (p && p->isMoving())
+        {
+            if (spot && !spot->District.empty())
+                return "Walking to " + spot->District;
+            return "Walking to Spot";
+        }
+
+        return res.AtSpot ? "At Spot" : "Moving to Spot";
+    }
+
+    uint32 Manager::GetTotalTargetPopulation() const
+    {
+        uint32 total = 0;
+        for (Hub const& hub : _hubs)
+        {
+            if (hub.Enabled && !hub.Spots.empty())
+                total += TargetPopulation(hub);
+        }
+        if (_maxTotalPopulation > 0 && total > _maxTotalPopulation)
+            total = _maxTotalPopulation;
+        return total;
+    }
+
+    void Manager::BuildTelemetryRoster(std::vector<std::string>& outRecords) const
+    {
+        uint32 nowSec = GameTimeSeconds();
+        for (Resident const& res : _residents)
+        {
+            ObjectGuid playerGuid = ObjectGuid::Create<HighGuid::Player>(res.Bot.GuidLow);
+            char guidBuf[32];
+            std::snprintf(guidBuf, sizeof(guidBuf), "0x%016llX", static_cast<unsigned long long>(playerGuid.GetRawValue()));
+
+            std::string name = res.Bot.Name;
+            std::string mod = "city";
+            uint8 classId = 1;
+            uint8 level = res.Bot.Level;
+            std::string faction = (res.Bot.Team == TeamSide::Alliance) ? "alliance" : "horde";
+            float x = res.TargetX;
+            float y = res.TargetY;
+            float z = res.TargetZ;
+            std::string loc = "World";
+
+            Player* p = ObjectAccessor::FindPlayer(playerGuid);
+            if (p)
+            {
+                classId = p->getClass();
+                level = p->GetLevel();
+                x = p->GetPositionX();
+                y = p->GetPositionY();
+                z = p->GetPositionZ();
+                if (p->GetTeamId() == TEAM_ALLIANCE)
+                    faction = "alliance";
+                else
+                    faction = "horde";
+            }
+
+            Hub const* hub = nullptr;
+            for (Hub const& h : _hubs)
+            {
+                if (h.Id == res.HubId)
+                {
+                    hub = &h;
+                    break;
+                }
+            }
+
+            Spot const* spot = FindSpot(res.HubId, res.SpotId);
+            if (hub)
+            {
+                if (spot && !spot->District.empty())
+                    loc = hub->Name + " - " + spot->District;
+                else
+                    loc = hub->Name;
+            }
+
+            std::string act = GetActivityNameString(res.Activity);
+            std::string roleStr = GetRoleNameString(res.Role);
+            std::string lastAct = ResolveCityAction(res, p, spot);
+            if (lastAct.size() > 32)
+                lastAct = lastAct.substr(0, 32);
+
+            std::string nextT = "Relocate to next POI";
+            if (res.Activity == CitizenActivity::Duel)
+                nextT = "Duel challenger/target";
+            else if (res.Activity == CitizenActivity::CrowdSocial)
+                nextT = "Social crowd dialogue";
+            else if (res.Activity == CitizenActivity::ReleaseCycle)
+                nextT = "Conclude residence session";
+
+            int32 dueMs = 0;
+            if (res.NextMoveAt > nowSec)
+                dueMs = static_cast<int32>((res.NextMoveAt - nowSec) * 1000);
+
+            std::string truth = "Deadline";
+            std::string status = "Active";
+            if (res.Activity == CitizenActivity::ReleaseCycle) status = "Resting";
+            else if (res.Sitting) status = "Sitting";
+            else if (res.DuelState != DuelPairState::None) status = "DuelCountdown";
+            else if (!res.AtSpot) status = "Patrolling";
+
+            // Format: guid|name|module|classId|level|faction|location|activity|lastAction|nextTask|dueMs|truthClass|status|x|y|z|zone|role
+            char rec[512];
+            std::snprintf(rec, sizeof(rec), "%s|%s|%s|%u|%u|%s|%s|%s|%s|%s|%d|%s|%s|%.1f|%.1f|%.1f|%s|%s",
+                guidBuf, name.c_str(), mod.c_str(), static_cast<uint32>(classId), static_cast<uint32>(level),
+                faction.c_str(), loc.c_str(), act.c_str(), lastAct.c_str(), nextT.c_str(),
+                dueMs, truth.c_str(), status.c_str(), x, y, z, hub ? hub->Name.c_str() : loc.c_str(), roleStr.c_str());
+
+            outRecords.emplace_back(rec);
+        }
+    }
+
+    bool Manager::BuildBotDetail(uint32 guidLow, std::string& outPayload) const
+    {
+        Resident const* res = FindResident(guidLow);
+        if (!res)
+            return false;
+
+        Player* player = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(guidLow));
+        if (!player)
+            return false;
+
+        char guidBuf[32];
+        std::snprintf(guidBuf, sizeof(guidBuf), "0x%016llX",
+            static_cast<unsigned long long>(player->GetGUID().GetRawValue()));
+
+        std::string role = GetRoleNameString(res->Role);
+        Spot const* spot = FindSpot(res->HubId, res->SpotId);
+        std::string action = ResolveCityAction(*res, player, spot);
+
+        std::string targetName = "None";
+        uint32 targetHp = 100;
+        if (Unit* vic = player->GetVictim())
+        {
+            targetName = vic->GetName();
+            targetHp = static_cast<uint32>(vic->GetHealthPct());
+        }
+        else if (res->DuelPartnerGuid != 0)
+        {
+            if (Player* opp = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(res->DuelPartnerGuid)))
+            {
+                targetName = opp->GetName();
+                targetHp = static_cast<uint32>(opp->GetHealthPct());
+            }
+        }
+
+        std::string spellName = "None";
+        if (Spell* sp = player->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+            if (sp->GetSpellInfo() && sp->GetSpellInfo()->SpellName[0])
+                spellName = sp->GetSpellInfo()->SpellName[0];
+
+        std::string strategies = "None";
+        std::string lastActions = "None";
+        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+        {
+            strategies = ai->HandleRemoteCommand("strategy");
+            if (strategies.empty())
+                strategies = "None";
+
+            lastActions = ai->HandleRemoteCommand("action");
+            if (lastActions.empty())
+                lastActions = "None";
+        }
+
+        // Format: guid|role|action|targetName|targetHp|spellName|strategies|lastAction
+        char buf[1024];
+        std::snprintf(buf, sizeof(buf), "%s|%s|%s|%s|%u|%s|%s|%s",
+            guidBuf, role.c_str(), action.c_str(), targetName.c_str(), targetHp,
+            spellName.c_str(), strategies.c_str(), lastActions.c_str());
+
+        outPayload = buf;
+        return true;
+    }
+
+    void Manager::BuildTelemetryHubs(std::string& outPayload) const
+    {
+        outPayload.clear();
+        for (Hub const& hub : _hubs)
+        {
+            if (!hub.Enabled) continue;
+            uint32 target = TargetPopulation(hub);
+            uint32 active = CountResidents(hub.Id);
+            uint32 pending = 0;
+            uint32 poiCount = static_cast<uint32>(hub.Spots.size());
+            float timeMult = static_cast<float>(CurrentTimeMultiplier()) / 100.0f;
+
+            char line[256];
+            std::snprintf(line, sizeof(line), "%u|%s|%u|%u|%u|%u|%.1f\n",
+                hub.Id, hub.Name.c_str(), target, active, pending, poiCount, timeMult);
+            outPayload += line;
+        }
+    }
+
+    bool Manager::CanExecuteDuelStep(uint32 hubId, uint64 generation, uint32 guidLow) const
+    {
+        Hub const* hub = FindHub(hubId);
+        if (!hub)
+            return false;
+        Resident const* resident = FindResident(guidLow);
+        if (!resident || resident->HubId != hubId)
+            return false;
+        if (resident->Token.Generation != generation || resident->Token.GuidLow != guidLow ||
+            resident->Token.ActivityId != hubId || resident->Token.Owner != PlayerbotsLife::ReservationOwner::CityLife ||
+            !PlayerbotsLife::ValidateActiveLease(resident->Token))
+            return false;
+        Player* player = FindPlayer(guidLow);
+        return player && player->IsInWorld() && player->IsAlive() && !IsHumanControlled(player) &&
+            !player->IsInFlight() && !player->InBattleground() && !player->InBattlegroundQueue() &&
+            player->GetMap() && !player->GetMap()->Instanceable();
+    }
+
+    void Manager::ScheduleDuel(uint32 hubId, uint64 pairId, PlayerbotsLife::LeaseToken const& challengerToken,
+        PlayerbotsLife::LeaseToken const& targetToken, uint32 challengerGuid, uint32 targetGuid,
+        std::string const& challengerName, std::string const& targetName, uint32 delaySeconds,
+        bool realPlayerTarget)
+    {
+        if (!challengerGuid || !targetGuid || challengerGuid == targetGuid)
+            return;
+
+        for (DuelStep const& queued : _duelQueue)
+        {
+            if (queued.ChallengerGuidLow == challengerGuid || queued.TargetGuidLow == challengerGuid ||
+                queued.ChallengerGuidLow == targetGuid || queued.TargetGuidLow == targetGuid)
+                return;
+        }
+
+        DuelStep step;
+        step.HubId = hubId;
+        step.Generation = challengerToken.Generation;
+        step.PairId = pairId;
+        step.ChallengerToken = challengerToken;
+        step.TargetToken = targetToken;
+        step.ChallengerGuidLow = challengerGuid;
+        step.TargetGuidLow = targetGuid;
+        step.ChallengerName = challengerName;
+        step.TargetName = targetName;
+        step.ExecuteAt = GameTimeSeconds() + delaySeconds;
+        step.TargetIsRealPlayer = realPlayerTarget;
+        _duelQueue.push_back(step);
+    }
+
+    void Manager::ApplyDuelStrategies(Player* player) const
+    {
+        if (!player)
+            return;
+        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+        {
+            std::string combatStrats = _duelCombatStrategies;
+            std::string nonCombatStrats = _duelNonCombatStrategies;
+            if (!_chatScriptedConversations && !_chatGreetings && !_chatUnrestricted)
+            {
+                combatStrats += ",-chat,-emote";
+                nonCombatStrats += ",-chat,-emote";
+            }
+            ai->ChangeStrategy(combatStrats, BOT_STATE_COMBAT);
+            ai->ChangeStrategy(nonCombatStrats, BOT_STATE_NON_COMBAT);
+            ai->ChangeStrategy("+stay,-follow,-passive,-grind", BOT_STATE_NON_COMBAT);
+        }
+    }
+
+    void Manager::RestoreCityStrategies(Player* player, Resident& resident) const
+    {
+        if (!player)
+            return;
+        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+        {
+            ai->ChangeStrategy("-duel,-pvp", BOT_STATE_COMBAT);
+            ApplyCityStrategies(player, resident);
+        }
+    }
+
+    void Manager::ProcessDuelQueue()
+    {
+        uint32 now = GameTimeSeconds();
+        std::vector<DuelStep> keep;
+        for (DuelStep const& step : _duelQueue)
+        {
+            if (step.ExecuteAt > now)
+            {
+                keep.push_back(step);
+                continue;
+            }
+
+            if (!CanExecuteDuelStep(step.HubId, step.Generation, step.ChallengerGuidLow))
+                continue;
+            if (!step.TargetIsRealPlayer && !CanExecuteDuelStep(step.HubId, step.TargetToken.Generation, step.TargetGuidLow))
+                continue;
+
+            Hub const* hub = FindHub(step.HubId);
+            if (!hub)
+                continue;
+
+            Player* challenger = FindPlayer(step.ChallengerGuidLow);
+            Player* target = FindPlayer(step.TargetGuidLow);
+            if (!challenger || !target || challenger == target || !challenger->GetSession() || !target->GetSession())
+                continue;
+            if (!GET_PLAYERBOT_AI(challenger) || !IsConfiguredBotAccount(challenger->GetSession()->GetAccountId()))
+                continue;
+            if (step.TargetIsRealPlayer ? !::IsRealPlayer(target) :
+                (!GET_PLAYERBOT_AI(target) || !IsConfiguredBotAccount(target->GetSession()->GetAccountId())))
+                continue;
+
+            auto fail = [&](char const* reason, uint32 result = uint32(SPELL_CAST_OK))
+            {
+                uint32 until = now + std::max<uint32>(DuelFailureBackoff, _duelCooldownSec);
+                _botDuelCooldown[step.ChallengerGuidLow] = std::max(_botDuelCooldown[step.ChallengerGuidLow], until);
+                if (!step.TargetIsRealPlayer)
+                    _botDuelCooldown[step.TargetGuidLow] = std::max(_botDuelCooldown[step.TargetGuidLow], until);
+                LOG_WARN("module", "[CityLife] Duel request deferred: {} -> {}; reason={} spell_result={} spell={} "
+                    "area={}/{} dist={} phase={}/{} backoff={}s",
+                    challenger->GetName(), target->GetName(), reason, result, _duelSpellId,
+                    challenger->GetAreaId(), target->GetAreaId(), challenger->GetExactDist(target),
+                    challenger->GetPhaseMask(), target->GetPhaseMask(), until - now);
+            };
+
+            if (!challenger->IsInWorld() || !target->IsInWorld() || !challenger->IsAlive() || !target->IsAlive() ||
+                challenger->IsBeingTeleported() || target->IsBeingTeleported() ||
+                challenger->IsInFlight() || target->IsInFlight())
+                continue;
+
+            if (challenger->GetMap() != target->GetMap() || !challenger->InSamePhase(target))
+            {
+                fail("Map or phase mismatch", SPELL_FAILED_BAD_TARGETS);
+                continue;
+            }
+
+            bool matching = challenger->duel && target->duel &&
+                challenger->duel->Opponent == target && target->duel->Opponent == challenger &&
+                challenger->duel->Initiator == challenger && target->duel->Initiator == challenger &&
+                challenger->GetGuidValue(PLAYER_DUEL_ARBITER) &&
+                challenger->GetGuidValue(PLAYER_DUEL_ARBITER) == target->GetGuidValue(PLAYER_DUEL_ARBITER);
+            bool started = matching &&
+                (challenger->duel->State == DUEL_STATE_COUNTDOWN || challenger->duel->State == DUEL_STATE_IN_PROGRESS) &&
+                (target->duel->State == DUEL_STATE_COUNTDOWN || target->duel->State == DUEL_STATE_IN_PROGRESS);
+
+            DuelRequestAction action = EvaluateDuelRequest(step.RequestSent, challenger->duel || target->duel,
+                matching, step.TargetIsRealPlayer, started, now, step.RequestDeadline);
+
+            if (action == DuelRequestAction::Busy)
+                continue;
+
+            if (action == DuelRequestAction::Wait)
+            {
+                DuelStep waiting = step;
+                waiting.ExecuteAt = now + 1;
+                keep.push_back(waiting);
+                continue;
+            }
+
+            if (action == DuelRequestAction::TimedOut)
+            {
+                fail("Duel state not created after cast");
+                continue;
+            }
+
+            if (action == DuelRequestAction::AcceptBot || action == DuelRequestAction::Confirmed)
+            {
+                if (action == DuelRequestAction::AcceptBot)
+                {
+                    if (target->duel->State != DUEL_STATE_CHALLENGED || challenger->duel->State != DUEL_STATE_CHALLENGED)
+                    {
+                        fail("Duel accept state mismatch");
+                        continue;
+                    }
+                    WorldPacket packet(CMSG_DUEL_ACCEPTED, 8);
+                    packet << target->GetGuidValue(PLAYER_DUEL_ARBITER);
+                    target->GetSession()->HandleDuelAcceptedOpcode(packet);
+                    if (!challenger->duel || !target->duel ||
+                        challenger->duel->State != DUEL_STATE_COUNTDOWN || target->duel->State != DUEL_STATE_COUNTDOWN)
+                    {
+                        fail("Countdown not verified after duel acceptance");
+                        continue;
+                    }
+                }
+
+                if (step.TargetIsRealPlayer)
+                {
+                    _botChallengeCooldown[step.ChallengerGuidLow] = now + _duelCooldownSec;
+                    _playerChallengeCooldown[step.TargetGuidLow] = now + _duelCooldownSec;
+                    PlayerbotsLife::RecordRealPlayerChallenge(step.TargetGuidLow, now, _duelCooldownSec);
+                }
+                else
+                {
+                    _botDuelCooldown[step.ChallengerGuidLow] = now + _duelCooldownSec;
+                    _botDuelCooldown[step.TargetGuidLow] = now + _duelCooldownSec;
+                }
+
+                Resident* resA = FindResident(step.ChallengerGuidLow);
+                Resident* resB = FindResident(step.TargetGuidLow);
+                if (resA)
+                {
+                    resA->DuelState = DuelPairState::Active;
+                    resA->DuelPartnerGuid = step.TargetGuidLow;
+                    resA->CoreDuelArbiter = challenger->GetGuidValue(PLAYER_DUEL_ARBITER).GetRawValue();
+                }
+                if (resB)
+                {
+                    resB->DuelState = DuelPairState::Active;
+                    resB->DuelPartnerGuid = step.ChallengerGuidLow;
+                    resB->CoreDuelArbiter = target->GetGuidValue(PLAYER_DUEL_ARBITER).GetRawValue();
+                }
+
+                ApplyDuelStrategies(challenger);
+                if (!step.TargetIsRealPlayer)
+                    ApplyDuelStrategies(target);
+
+                LOG_INFO("module", "[CityLife] Duel state confirmed: {} -> {}; state={}",
+                    challenger->GetName(), target->GetName(),
+                    step.TargetIsRealPlayer ? "waiting/accepted by player" : "countdown/in-progress");
+                continue;
+            }
+
+            if (challenger->IsInCombat() || target->IsInCombat() || challenger->IsPetInCombat() || target->IsPetInCombat())
+            {
+                fail("Self or pet in combat", SPELL_FAILED_TARGET_AFFECTING_COMBAT);
+                continue;
+            }
+
+            SpellInfo const* spell = sSpellMgr->GetSpellInfo(_duelSpellId);
+            if (!spell || !spell->HasEffect(SPELL_EFFECT_DUEL))
+            {
+                fail("Spell lacks duel effect", SPELL_FAILED_SPELL_UNAVAILABLE);
+                continue;
+            }
+
+            AreaTableEntry const* casterArea = sAreaTableStore.LookupEntry(challenger->GetAreaId());
+            AreaTableEntry const* targetArea = sAreaTableStore.LookupEntry(target->GetAreaId());
+            if ((casterArea && !(casterArea->flags & AREA_FLAG_ALLOW_DUELS)) ||
+                (targetArea && !(targetArea->flags & AREA_FLAG_ALLOW_DUELS)))
+            {
+                fail("Duels forbidden in area", SPELL_FAILED_NO_DUELING);
+                continue;
+            }
+
+            if (!target->GetSocial() || target->GetSocial()->HasIgnore(challenger->GetGUID()))
+            {
+                fail("Social info not ready or target ignored", SPELL_FAILED_BAD_TARGETS);
+                continue;
+            }
+
+            SpellCastResult targetResult = spell->CheckTarget(challenger, target, false);
+            if (targetResult != SPELL_CAST_OK)
+            {
+                fail("Target requirements not met", targetResult);
+                continue;
+            }
+
+            float approachDistance = DuelApproachDistance(challenger->GetSpellMaxRangeForTarget(target, spell));
+            if (challenger->GetExactDist(target) > approachDistance || !challenger->IsWithinLOSInMap(target))
+            {
+                DuelStep retry = step;
+                if (retry.RetryCount++ < DuelApproachRetries)
+                {
+                    float x, y, z;
+                    target->GetNearPoint(challenger, x, y, z, challenger->GetCombatReach(),
+                        std::min(3.0f, approachDistance * 0.5f), target->GetAngle(challenger));
+                    if (PlayerbotAI* ai = GET_PLAYERBOT_AI(challenger))
+                    {
+                        PositionMap& positions = ai->GetAiObjectContext()->GetValue<PositionMap&>("position")->Get();
+                        positions["stay"].Set(x, y, z, challenger->GetMapId());
+                    }
+                    challenger->GetMotionMaster()->MovePoint(0, x, y, z);
+                    retry.ExecuteAt = now + 3;
+                    keep.push_back(retry);
+                }
+                else
+                    fail("Approach or line-of-sight timeout", SPELL_FAILED_OUT_OF_RANGE);
+                continue;
+            }
+
+            challenger->SetFacingToObject(target);
+            if (!step.TargetIsRealPlayer)
+            {
+                target->SetFacingToObject(challenger);
+                challenger->SetHealth(challenger->GetMaxHealth());
+                target->SetHealth(target->GetMaxHealth());
+                challenger->SetPower(challenger->getPowerType(), challenger->GetMaxPower(challenger->getPowerType()));
+                target->SetPower(target->getPowerType(), target->GetMaxPower(target->getPowerType()));
+            }
+
+            SpellCastResult result = challenger->CastSpell(target, _duelSpellId, true);
+            if (result != SPELL_CAST_OK)
+            {
+                fail("Duel spell cast failed", result);
+                continue;
+            }
+
+            DuelStep waiting = step;
+            waiting.RequestSent = true;
+            waiting.RequestDeadline = now + DuelRequestTimeout;
+            waiting.ExecuteAt = now + 1;
+            keep.push_back(waiting);
+        }
+        _duelQueue.swap(keep);
+    }
+
+    void Manager::BuildTelemetryQueues(std::string& outPayload) const
+    {
+        outPayload.clear();
+        uint32 now = GameTimeSeconds();
+        uint32 taskId = 1;
+        for (DuelStep const& d : _duelQueue)
+        {
+            int32 due = (d.ExecuteAt > now) ? static_cast<int32>((d.ExecuteAt - now) * 1000) : 0;
+            char line[256];
+            std::snprintf(line, sizeof(line), "%u|duel|%s|Duel %s|%d|Deadline\n", taskId++, d.ChallengerName.c_str(), d.TargetName.c_str(), due);
+            outPayload += line;
+            if (taskId > 50) break;
+        }
     }
 }

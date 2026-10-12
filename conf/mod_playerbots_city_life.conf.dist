@@ -219,6 +219,14 @@ CityLife.Duels.MeetingPoint.Enable = 1
 # Enable tactical combat range-keeping (ranged classes kite to 11-20yd, melee classes close in).
 CityLife.Duels.TacticalRange.Enable = 1
 
+# Duel combat strategies applied to bots while a duel countdown or match is active.
+# Default: +duel,+pvp,+boost
+CityLife.Duels.CombatStrategies = +duel,+pvp,+boost
+
+# Duel non-combat strategies applied to bots while waiting or preparing in a duel ring.
+# Default: +duel,+pvp
+CityLife.Duels.NonCombatStrategies = +duel,+pvp
+
 ###################################################################################################
 # Movement, Mounting & Navmesh Safety
 ###################################################################################################
@@ -315,11 +323,11 @@ CityLife.Hub.Goldshire.Population = 10
 CityLife.Hub.Goldshire.Min = 2
 
 # Capital gate duel ritual grounds
-CityLife.Hub.StormwindGate.Enable = 1
+CityLife.Hub.StormwindGate.Enable = 0
 CityLife.Hub.StormwindGate.Population = 10
 CityLife.Hub.StormwindGate.Min = 2
 
-CityLife.Hub.OrgrimmarGate.Enable = 1
+CityLife.Hub.OrgrimmarGate.Enable = 0
 CityLife.Hub.OrgrimmarGate.Population = 10
 CityLife.Hub.OrgrimmarGate.Min = 2
 

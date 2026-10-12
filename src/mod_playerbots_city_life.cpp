@@ -42,6 +42,7 @@ public:
     void OnShutdown() override
     {
         sCityLifeMgr.Shutdown();
+        PlayerbotsLife::LifeTelemetryBridge::Instance().UnregisterProvider("city");
         PlayerbotsLife::UnregisterActiveModule(PlayerbotsLife::ModuleSystemFlags::MODULE_CITY_LIFE);
     }
 };
@@ -115,14 +116,8 @@ public:
             return true;
 
         // Never suppress real human players or human-controlled SelfBots
-        if (::IsRealPlayer(player))
+        if (::IsRealPlayer(player) || ::IsSelfBot(player))
             return true;
-
-        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
-        {
-            if (ai->IsSelfBot())
-                return true;
-        }
 
         uint32 const guidLow = player->GetGUID().GetCounter();
         if (sCityLifeMgr.IsResidentInSyntheticActivity(guidLow))
@@ -140,14 +135,8 @@ public:
             return true;
 
         // Never suppress real human players or human-controlled SelfBots
-        if (::IsRealPlayer(player))
+        if (::IsRealPlayer(player) || ::IsSelfBot(player))
             return true;
-
-        if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
-        {
-            if (ai->IsSelfBot())
-                return true;
-        }
 
         uint32 const guidLow = player->GetGUID().GetCounter();
         if (sCityLifeMgr.IsResidentInSyntheticActivity(guidLow))
@@ -214,6 +203,45 @@ public:
     }
 };
 
+class CityLifeTelemetryProvider : public PlayerbotsLife::ILifeTelemetryProvider
+{
+public:
+    std::string GetModuleName() const override { return "city"; }
+
+    void BuildCapacity(uint32& target, uint32& active, uint32& pending, uint32& releasing) override
+    {
+        target = sCityLifeMgr.GetTotalTargetPopulation();
+        active = sCityLifeMgr.GetResidentCount();
+        pending = sCityLifeMgr.GetPendingAdmissionCount();
+        releasing = sCityLifeMgr.GetReleasingCount();
+    }
+
+    void BuildRoster(std::vector<std::string>& outRecords) override
+    {
+        sCityLifeMgr.BuildTelemetryRoster(outRecords);
+    }
+
+    void BuildHubsOrZones(std::string& outPayload) override
+    {
+        sCityLifeMgr.BuildTelemetryHubs(outPayload);
+    }
+
+    void BuildQueues(std::string& outPayload) override
+    {
+        sCityLifeMgr.BuildTelemetryQueues(outPayload);
+    }
+
+    uint32 GetLiveBotCensus() const override
+    {
+        return sCityLifeMgr.GetLiveBotCensus();
+    }
+
+    bool BuildBotDetail(uint32 guidLow, std::string& outPayload) override
+    {
+        return sCityLifeMgr.BuildBotDetail(guidLow, outPayload);
+    }
+};
+
 void AddCityLifeScripts()
 {
     static_assert(PlayerbotsLife::LIFE_BOT_RESERVATION_PROTOCOL_VERSION == 2026101104,
@@ -221,6 +249,7 @@ void AddCityLifeScripts()
 
     PlayerbotsLife::RegisterActiveModule(PlayerbotsLife::ModuleSystemFlags::MODULE_CITY_LIFE);
     PlayerbotsLife::RegisterTelemetryBridge();
+    PlayerbotsLife::LifeTelemetryBridge::Instance().RegisterProvider(std::make_shared<CityLifeTelemetryProvider>());
     new CityLifeWorldScript();
     new CityLifePlayerScript();
     new CityLifeGroupScript();
