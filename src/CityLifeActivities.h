@@ -23,24 +23,6 @@ namespace CityLife
                                 uint32 chatCooldownSec, uint32 afkMinSec, uint32 afkMaxSec,
                                 bool enableAfk = true);
 
-        void ExecuteDuel(Resident& resident, Player* bot, Hub const& hub, uint32 now,
-                         uint32 duelCooldownSec, float duelMaxDist, bool meetingPointEnabled = true);
-
-        void ExecuteDuelSpectator(Resident& resident, Player* bot, Hub const& hub, uint32 now);
-
-        // Tactical Duel Behaviors & Rendezvous
-        void ComputeDuelMeetPoint(Player* bot, Player* opponent, Spot const& anchorSpot,
-                                  float maxDistance, float& meetX, float& meetY, float& meetZ);
-        void ComputeDuelStandPoint(Player* bot, Player* opponent, float meetX, float meetY,
-                                   float meetZ, float& standX, float& standY, float& standZ);
-        bool IsRangedDueler(Player* bot);
-        bool IsMeleeDueler(Player* bot);
-        bool MoveToRangedDuelDistance(Player* bot, Resident& resident, Player* opponent,
-                                      Spot const* anchorSpot, float leashRadius);
-        void DriveActiveDuel(Resident& resident, Player* bot, Hub const& hub, uint32 now,
-                             float leashRadius, bool tacticalRange);
-        void CancelCityDuel(Player* bot, char const* reason);
-
         void ExecuteFishing(Resident& resident, Player* bot, Hub const& hub, uint32 now);
 
         void ExecuteInnDance(Resident& resident, Player* bot, Hub const& hub, uint32 now,

@@ -123,8 +123,8 @@ CityLife.Time.NightMultiplierPct = 25
 
 # Resident bots occasionally move between auction houses, banks, mailboxes, and public squares.
 CityLife.Behaviour.Relocate = 1
-CityLife.Behaviour.RelocateMinSeconds = 180
-CityLife.Behaviour.RelocateMaxSeconds = 600
+CityLife.Behaviour.RelocateMinSeconds = 60
+CityLife.Behaviour.RelocateMaxSeconds = 180
 
 # Alternating District Visits:
 # When enabled, bots in major capitals (Stormwind, Orgrimmar, Ironforge, etc.) oscillate
@@ -140,16 +140,30 @@ CityLife.Behaviour.EmoteChancePct = 35
 CityLife.Behaviour.EmoteMinSeconds = 120
 CityLife.Behaviour.EmoteMaxSeconds = 360
 
-# Weight multiplier for auction houses and banks in designated hubs (250 = 2.5x base weight).
-CityLife.Behaviour.ServiceSpotWeightMultiplierPct = 250
+# Weight multiplier for auction houses and banks in designated hubs (100 = 1.0x base weight, balanced across all POIs).
+CityLife.Behaviour.ServiceSpotWeightMultiplierPct = 100
 
 # Percentage of bots initially assigned to service spots that will remain stationary.
-CityLife.Behaviour.StaticServiceChancePct = 80
+# Lowered to 20% to allow fluid circulation between mailboxes, vendors, trainers, taverns, and plazas.
+CityLife.Behaviour.StaticServiceChancePct = 20
 CityLife.Behaviour.StaticServiceHubs = "Stormwind,Orgrimmar"
 CityLife.Behaviour.StaticServiceCategories = "auction,bank"
 
+# Activity Selection Weights (Determines relative probability when selecting a citizen's next activity)
+# Weights can be adjusted to tune the civic composition of the city.
+CityLife.Weight.Mailbox = 10
+CityLife.Weight.Bank = 12
+CityLife.Weight.Auction = 12
+CityLife.Weight.Vendor = 8
+CityLife.Weight.Trainer = 8
+CityLife.Weight.Tavern = 15
+CityLife.Weight.Plaza = 12
+CityLife.Weight.Wander = 10
+CityLife.Weight.Shrine = 5
+CityLife.Weight.Patrol = 8
+
 # Non-combat strategy string applied to resident bots.
-CityLife.Strategies.NonCombat = "+stay,-follow,-passive,-grind,-rpg,-travel,-duel,-pvp"
+CityLife.Strategies.NonCombat = "+stay,-follow,-passive,-grind,-rpg,-travel,-duel,-pvp,-chat,-emote"
 
 ###################################################################################################
 # Activity Switches (Independent On/Off Controls)
@@ -166,9 +180,7 @@ CityLife.Activities.AuctionHouse.Enable = 1
 CityLife.Activities.Mailbox.Enable = 1
 CityLife.Activities.Trainer.Enable = 1
 CityLife.Activities.FoodVendor.Enable = 1
-CityLife.Activities.DuelWatching.Enable = 1
 CityLife.Activities.Fishing.Enable = 1
-CityLife.Activities.Duels.Enable = 1
 CityLife.Activities.InnDancing.Enable = 1
 CityLife.Activities.PlazaSocial.Enable = 1
 CityLife.Activities.CrowdScenes.Enable = 1
@@ -184,7 +196,7 @@ CityLife.Activities.AFK.Enable = 1
 CityLife.Crowd.Enable = 1
 
 # Real-player proximity radius (in yards). Crowd logic wakes when a player enters this range.
-CityLife.Crowd.PlayerRadius = 60.0
+CityLife.Crowd.PlayerRadius = 100.0
 
 # Minimum cooldown (in seconds) between paired conversations for a crowd citizen.
 CityLife.Crowd.ChatCooldownSec = 90
@@ -192,40 +204,6 @@ CityLife.Crowd.ChatCooldownSec = 90
 # Minimum and maximum duration (in seconds) a crowd citizen stays flagged <AFK>.
 CityLife.Crowd.AfkMinSec = 60
 CityLife.Crowd.AfkMaxSec = 180
-
-###################################################################################################
-# Duelling Subsystem (Gate and Goldshire Duel Rings)
-###################################################################################################
-
-# Cooldown between duels per bot (in seconds).
-CityLife.Duels.CooldownSec = 45
-
-# Allow real players to challenge city duel bots.
-CityLife.Duels.AllowPlayerChallenge = 1
-
-# Allow bots to initiate duel challenges directed at real players within duel spots.
-# When enabled, bots will issue challenges to nearby non-GM real players (subject to
-# cross-module rate limiting and PlayerbotsLife challenge cooldowns). Real players with GM
-# privileges (security > SEC_PLAYER) are strictly shielded.
-# Default: 1 (Enabled)
-CityLife.Duels.BotChallengeRealPlayer = 1
-
-# Maximum leash radius around duel rings (in yards).
-CityLife.Duels.MaxDuelDistance = 40.0
-
-# Enable duel meeting-point rendezvous (both bots meet at midpoint before challenging).
-CityLife.Duels.MeetingPoint.Enable = 1
-
-# Enable tactical combat range-keeping (ranged classes kite to 11-20yd, melee classes close in).
-CityLife.Duels.TacticalRange.Enable = 1
-
-# Duel combat strategies applied to bots while a duel countdown or match is active.
-# Default: +duel,+pvp,+boost
-CityLife.Duels.CombatStrategies = +duel,+pvp,+boost
-
-# Duel non-combat strategies applied to bots while waiting or preparing in a duel ring.
-# Default: +duel,+pvp
-CityLife.Duels.NonCombatStrategies = +duel,+pvp
 
 ###################################################################################################
 # Movement, Mounting & Navmesh Safety
@@ -248,25 +226,25 @@ CityLife.Movement.MaxPathRefuseStreak = 3
 ###################################################################################################
 
 # Enable canned paired conversations between bots in crowd and plaza areas.
-# Set to 0 by default for silent out-of-the-box operation; enable if verbal chatter is desired.
+# Default: 0 (Disabled - completely silent operation).
 CityLife.Chat.ScriptedConversations = 0
 
 # Enable friendly greetings directed at nearby real players.
-# Set to 0 by default for silent out-of-the-box operation.
+# Default: 0 (Disabled - completely silent operation).
 CityLife.Chat.Greetings = 0
 
-# Allow unrestricted random /say chatter (disabled by default to prevent cascade).
+# Allow unrestricted random /say speech (disabled by default to prevent cascade).
 CityLife.Chat.Unrestricted = 0
 CityLife.Chat.RandomSayChance = 0
 CityLife.Chat.SayCooldownSec = 30
 
-# Enable economic interactions (trading, food purchasing). Disabled by default.
-CityLife.Interactions.Enable = 0
+# Enable economic interactions (trading, food purchasing).
+CityLife.Interactions.Enable = 1
 CityLife.Interactions.PlayerTrading = 0
-CityLife.Interactions.BuyFood = 0
+CityLife.Interactions.BuyFood = 1
 
 # Shield achievements and criteria progress while bots are actively engaged in
-# synthetic roleplay activities (duels, crowd scenes, tavern drinking, dancing).
+# synthetic roleplay activities (crowd scenes, tavern drinking, dancing).
 # When enabled (1), suppression applies only during synthetic actions and strictly
 # shields real human players and human-controlled SelfBots from suppression.
 # Default: 0 (Disabled - borrowed bots retain normal achievement progression)
@@ -277,11 +255,11 @@ CityLife.Achievements.BlockAchievements = 0
 ###################################################################################################
 
 CityLife.Hub.Stormwind.Enable = 1
-CityLife.Hub.Stormwind.Population = 35
+CityLife.Hub.Stormwind.Population = 45
 CityLife.Hub.Stormwind.Min = 5
 
 CityLife.Hub.Orgrimmar.Enable = 1
-CityLife.Hub.Orgrimmar.Population = 35
+CityLife.Hub.Orgrimmar.Population = 45
 CityLife.Hub.Orgrimmar.Min = 5
 
 CityLife.Hub.Ironforge.Enable = 1
@@ -322,24 +300,15 @@ CityLife.Hub.Goldshire.Enable = 1
 CityLife.Hub.Goldshire.Population = 10
 CityLife.Hub.Goldshire.Min = 2
 
-# Capital gate duel ritual grounds
-CityLife.Hub.StormwindGate.Enable = 0
-CityLife.Hub.StormwindGate.Population = 10
-CityLife.Hub.StormwindGate.Min = 2
-
-CityLife.Hub.OrgrimmarGate.Enable = 0
-CityLife.Hub.OrgrimmarGate.Population = 10
-CityLife.Hub.OrgrimmarGate.Min = 2
-
-# Wintergrasp starting camps (level 75-80 bracket, balanced so high-level bots are not monopolized)
-CityLife.Hub.WintergraspAlliance.Enable = 1
-CityLife.Hub.WintergraspAlliance.Population = 12
-CityLife.Hub.WintergraspAlliance.Min = 2
+# Wintergrasp starting camps (disabled by default with 0 population so no bots are deployed to Wintergrasp)
+CityLife.Hub.WintergraspAlliance.Enable = 0
+CityLife.Hub.WintergraspAlliance.Population = 0
+CityLife.Hub.WintergraspAlliance.Min = 0
 CityLife.Hub.WintergraspAlliance.TimeScaling = 0
 CityLife.Hub.WintergraspAlliance.ResidenceSeconds = 10800
 
-CityLife.Hub.WintergraspHorde.Enable = 1
-CityLife.Hub.WintergraspHorde.Population = 12
-CityLife.Hub.WintergraspHorde.Min = 2
+CityLife.Hub.WintergraspHorde.Enable = 0
+CityLife.Hub.WintergraspHorde.Population = 0
+CityLife.Hub.WintergraspHorde.Min = 0
 CityLife.Hub.WintergraspHorde.TimeScaling = 0
 CityLife.Hub.WintergraspHorde.ResidenceSeconds = 10800

@@ -7,7 +7,6 @@
 #ifndef CITY_LIFE_MGR_H
 #define CITY_LIFE_MGR_H
 
-#include "CityLifeDuelRequestPolicy.h"
 #include "CityLifeTypes.h"
 #include "AsyncCallbackProcessor.h"
 #include "QueryCallback.h"
@@ -48,7 +47,6 @@ namespace CityLife
         Player* FindCrowdChatPartner(uint32 hubId, Player* bot);
         void BeginCrowdChat(Player* bot, Player* partner, Resident& resident, uint32 now);
         void ClearResidentChatPartner(uint32 partnerGuidLow, uint32 expectedGuidLow);
-        Player* FindDuelOpponent(Hub const& hub, Player* bot, float centerX, float centerY, float radius);
         Resident* FindResident(uint32 guidLow);
         Resident const* FindResident(uint32 guidLow) const;
         void AssignSpot(Resident& resident, Hub const& hub, Spot const& spot, bool allowStationary);
@@ -74,16 +72,6 @@ namespace CityLife
         void BuildTelemetryQueues(std::string& outPayload) const;
         bool BuildBotDetail(uint32 guidLow, std::string& outPayload) const;
 
-        // Duel Queue & Combat Strategy Methods (Parity with PvP Life)
-        void ScheduleDuel(uint32 hubId, uint64 pairId, PlayerbotsLife::LeaseToken const& challengerToken,
-                          PlayerbotsLife::LeaseToken const& targetToken, uint32 challengerGuid, uint32 targetGuid,
-                          std::string const& challengerName, std::string const& targetName, uint32 delaySeconds,
-                          bool realPlayerTarget);
-        void ProcessDuelQueue();
-        void ApplyDuelStrategies(Player* player) const;
-        void RestoreCityStrategies(Player* player, Resident& resident) const;
-        bool CanExecuteDuelStep(uint32 hubId, uint64 generation, uint32 guidLow) const;
-
     private:
         Manager() = default;
 
@@ -97,7 +85,7 @@ namespace CityLife
         bool IsConfiguredBotAccount(uint32 accountId);
         void RefreshAccountCache();
         bool IsCandidate(Player* player);
-        bool IsResidentUsable(Player* player, bool allowOwnedDuel = false) const;
+        bool IsResidentUsable(Player* player) const;
         uint32 GetLiveWorldBotCount(bool forceRefresh = false) const;
         std::vector<BotCandidate> LoadCandidates(Hub const& hub, uint32 poolCount = 0);
 
@@ -112,6 +100,10 @@ namespace CityLife
         bool IsOutlyingDistrict(std::string const& hubName, std::string const& district) const;
         CitizenRole DetermineRole(Hub const& hub, Spot const& spot, BotCandidate const& candidate) const;
         CitizenActivity ChooseInitialActivity(CitizenRole role, Spot const& spot) const;
+        CitizenActivity PickNextActivity(Resident const& resident, Hub const& hub) const;
+        Spot const* ChooseSpotForActivity(Hub const& hub, CitizenActivity activity, uint32 ignoredSpotId, Player* botForPathCheck = nullptr) const;
+        void EnsureCanonicalFallbackSpots(Hub& hub);
+        static bool DistrictMatchesClass(std::string const& hubName, std::string const& district, uint8 botClass);
 
         uint32 CountResidents(uint32 hubId) const;
         uint32 TargetPopulation(Hub const& hub) const;
@@ -211,9 +203,7 @@ namespace CityLife
         bool _actMailbox = true;
         bool _actTrainer = true;
         bool _actFoodVendor = true;
-        bool _actDuelWatching = true;
         bool _actFishing = true;
-        bool _actDuels = true;
         bool _actInnDancing = true;
         bool _actPlazaSocial = true;
         bool _actCrowdScenes = true;
@@ -226,19 +216,6 @@ namespace CityLife
         uint32 _crowdAfkMinSec = 60;
         uint32 _crowdAfkMaxSec = 180;
         bool _activitiesAfkEnable = true;
-
-        // Duels Settings
-        uint32 _duelCooldownSec = 45;
-        bool _duelAllowPlayerChallenge = true;
-        bool _duelBotChallengeRealPlayer = true;
-        float _duelMaxDistance = 40.0f;
-        uint32 _duelSpellId = 7266;
-        std::string _duelCombatStrategies = "+duel,+pvp,+boost";
-        std::string _duelNonCombatStrategies = "+duel,+pvp,+boost,+stay,-follow,-passive,-grind";
-        std::vector<DuelStep> _duelQueue;
-        std::unordered_map<uint32, uint32> _botDuelCooldown;
-        std::unordered_map<uint32, uint32> _botChallengeCooldown;
-        std::unordered_map<uint32, uint32> _playerChallengeCooldown;
 
         // Movement & Sink Settings
         uint32 _mountBetweenPoiChance = 90;
@@ -260,9 +237,20 @@ namespace CityLife
 
         // Advanced Micro-Behaviors (Ported from mod-city-bots)
         bool _alternatingDistricts = true;
-        bool _duelMeetingPoint = true;
-        bool _duelTacticalRange = true;
         bool _waterAvoidance = true;
+
+        // Configurable Activity Weights (Ported from mod-city-bots)
+        uint32 _weightWanderDistrict = 30;
+        uint32 _weightSitInTavern = 20;
+        uint32 _weightRandomEmote = 15;
+        uint32 _weightVisitAuctionHouse = 10;
+        uint32 _weightVisitMailbox = 10;
+        uint32 _weightBuyFood = 10;
+        uint32 _weightVisitTrainer = 8;
+        uint32 _weightDrinkInTavern = 10;
+        uint32 _weightWalkCityWalls = 10;
+        uint32 _weightFishAtDocks = 5;
+        uint32 _weightReturnToInn = 15;
 
         std::vector<Hub> _hubs;
         struct ReleasingResident

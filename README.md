@@ -24,7 +24,7 @@ City Life populates capitals, towns, and popular social hubs with configurable A
 - **Conservative Population Borrowing Budget:** Strict default cap of 10% eligible pool / 120 bots max (configured for a 1,000-bot server) guarantees that ≥ 80% (800+ bots) of random playerbots remain completely free to roam, quest, run dungeons, and engage in open-world activities.
 - **Zero Bot Tampering Invariant:** Bots are borrowed strictly AS-IS from the natural Playerbot pool with zero artificial level modifications, zero talent changes, and zero stat inflation.
 - **Zero GM Spam Protection:** Game Masters and administrators are strictly exempt from unsolicited duel challenges, whispers, or broadcasts.
-- **Silent-by-Default Operation:** All ambient chatter, scripted dialogues, and greetings default to OFF (`0`) in config for a completely unobtrusive server experience out of the box.
+- **Silent-by-Default Operation:** All ambient speech, scripted dialogues, and greetings default to OFF (`0`) in config for a completely unobtrusive server experience out of the box.
 - **Instant Disengagement on Invite or Logout:** Residents immediately drop city behaviors if invited to a player group, commanded by an owner, or logged out.
 - **Shared Duel Staging Lattice (20yd Spacing):** Prevents duel ring overlap outside capital gates when running alongside `mod-playerbots-pvp-life`.
 - **Zero Feature Suppression Coexistence:** Fully compatible with `mod-playerbots-pvp-life`. Both modules can run simultaneously—including dueling outside capital gates—without disabling or yielding any features.

@@ -49,8 +49,8 @@ VALUES
 ('Silvermoon',1,1,1,80,530,8,130),
 ('Shattrath',1,2,58,80,530,20,200),
 ('Dalaran',1,2,68,80,571,25,210),
-('WintergraspAlliance',1,0,70,80,571,40,230),
-('WintergraspHorde',1,1,70,80,571,40,230),
+('WintergraspAlliance',0,0,70,80,571,0,230),
+('WintergraspHorde',0,1,70,80,571,0,230),
 ('Gadgetzan',1,2,35,80,1,8,110),
 ('Goldshire',1,0,1,30,0,8,100),
 ('HonorHold',1,0,58,80,530,6,100),
@@ -146,5 +146,51 @@ INNER JOIN
 
   UNION ALL SELECT 'Thrallmar','MainSquare','square',156.251,2673.45,85.1587,0.382074,8,130
   UNION ALL SELECT 'Thrallmar','Mailbox','mail',172.726,2623.06,86.8361,3.56983,5,115
-  UNION ALL SELECT 'Thrallmar','FlightMaster','flight',233.137,2632.3,88.3007,2.67035,5,85
+  UNION ALL SELECT 'Thrallmar','FlightMaster','flight',233.137,2632.3,88.3007,2.67035,5,85,
+
+  -- Capital civic spots: Class Trainers, Docks, Taverns
+  UNION ALL SELECT 'Stormwind','TrainerOldTown','trainer',-8705.0,812.0,97.0,0.0,5,80
+  UNION ALL SELECT 'Stormwind','TrainerMageQuarter','trainer',-9000.0,884.0,29.6,0.0,5,80
+  UNION ALL SELECT 'Stormwind','TrainerDwarvenDistrict','trainer',-8425.0,610.0,95.0,0.0,5,80
+  UNION ALL SELECT 'Stormwind','TrainerCathedral','trainer',-8575.0,880.0,106.0,0.0,5,80
+  UNION ALL SELECT 'Stormwind','DockHarbor','dock',-8642.0,1336.0,5.3,3.14,4,80
+  UNION ALL SELECT 'Stormwind','TavernTrade','tavern',-8854.0,670.0,96.0,0.0,4,100
+
+  UNION ALL SELECT 'Orgrimmar','TrainerStrength','trainer',1720.0,-4310.0,33.0,0.0,5,100
+  UNION ALL SELECT 'Orgrimmar','TrainerSpirits','trainer',1450.0,-4185.0,44.0,0.0,5,80
+  UNION ALL SELECT 'Orgrimmar','TrainerWisdom','trainer',1938.0,-4675.0,32.0,0.0,5,80
+  UNION ALL SELECT 'Orgrimmar','TrainerShadow','trainer',1835.0,-4370.0,-16.0,0.0,5,80
+  UNION ALL SELECT 'Orgrimmar','DockSpirits','dock',1960.0,-4180.0,25.0,0.0,4,80
+
+  UNION ALL SELECT 'Ironforge','TrainerMilitary','trainer',-5010.0,-1250.0,501.0,0.0,5,80
+  UNION ALL SELECT 'Ironforge','TrainerMystic','trainer',-4650.0,-960.0,501.0,0.0,5,80
+  UNION ALL SELECT 'Ironforge','DockCavern','dock',-4820.0,-1150.0,502.0,0.0,4,80
+
+  UNION ALL SELECT 'Undercity','TrainerWar','trainer',1700.0,90.0,-62.0,0.0,5,80
+  UNION ALL SELECT 'Undercity','TrainerMagic','trainer',1660.0,210.0,-43.0,0.0,5,80
+  UNION ALL SELECT 'Undercity','DockCanal','dock',1670.0,310.0,-60.0,0.0,4,80
+
+  UNION ALL SELECT 'Darnassus','TrainerWarriors','trainer',10040.0,2530.0,1316.0,0.0,5,80
+  UNION ALL SELECT 'Darnassus','TrainerTemple','trainer',9705.0,2510.0,1335.0,0.0,5,80
+  UNION ALL SELECT 'Darnassus','TrainerEnclave','trainer',10080.0,2205.0,1328.0,0.0,5,80
+  UNION ALL SELECT 'Darnassus','DockRuttheran','dock',9870.0,2580.0,1316.0,0.0,4,80
+
+  UNION ALL SELECT 'Exodar','TrainerTraders','trainer',-3860.0,-11695.0,-137.0,0.0,5,80
+  UNION ALL SELECT 'Exodar','TrainerTrainers','trainer',-4215.0,-11740.0,-139.0,0.0,5,80
+  UNION ALL SELECT 'Exodar','TrainerVault','trainer',-4100.0,-11830.0,-106.0,0.0,5,70
+
+  UNION ALL SELECT 'ThunderBluff','TrainerHunter','trainer',-1050.0,250.0,135.0,0.0,5,80
+  UNION ALL SELECT 'ThunderBluff','TrainerSpirit','trainer',-1425.0,-55.0,158.0,0.0,5,80
+  UNION ALL SELECT 'ThunderBluff','TrainerCentral','trainer',-1110.0,-35.0,132.0,0.0,5,80
+  UNION ALL SELECT 'ThunderBluff','DockLower','dock',-1300.0,-20.0,125.0,0.0,4,80
+
+  UNION ALL SELECT 'Silvermoon','TrainerRoyal','trainer',9605.0,-7380.0,14.0,0.0,5,80
+  UNION ALL SELECT 'Silvermoon','TrainerMurder','trainer',9800.0,-7335.0,14.0,0.0,5,80
+  UNION ALL SELECT 'Silvermoon','TrainerFarstriders','trainer',9900.0,-7420.0,14.0,0.0,5,80
+
+  UNION ALL SELECT 'Shattrath','TrainerScryer','trainer',-2000.0,5350.0,-8.0,0.0,5,80
+  UNION ALL SELECT 'Shattrath','TrainerAldor','trainer',-1745.0,5760.0,130.0,0.0,5,80
+
+  UNION ALL SELECT 'Dalaran','TrainerKrasus','trainer',5775.0,620.0,650.0,0.0,5,80
+  UNION ALL SELECT 'Dalaran','TrainerViolet','trainer',5810.0,760.0,640.0,0.0,5,80
 ) AS `seed` ON `seed`.`hub_name`=`hub`.`name`;

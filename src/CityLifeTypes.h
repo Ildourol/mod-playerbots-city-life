@@ -27,10 +27,8 @@ namespace CityLife
         Flex = 0,
         InnDancer = 1,
         PlazaTalker = 2,
-        GateDuelist = 3,
-        GoldshireDuelist = 4,
-        Fisher = 5,
-        Crowd = 6
+        Fisher = 3,
+        Crowd = 4
     };
 
     enum class CitizenActivity : uint8
@@ -41,19 +39,17 @@ namespace CityLife
         BuyFood = 3,
         WanderDistrict = 4,
         SitInTavern = 5,
-        WatchDuels = 6,
-        VisitTrainer = 7,
-        DrinkInTavern = 8,
-        WalkCityWalls = 9,
-        ReturnToInn = 10,
-        ReleaseCycle = 11,
-        RandomEmote = 12,
-        FishAtDocks = 13,
-        Idle = 14,
-        Duel = 15,
-        InnDance = 16,
-        PlazaSocial = 17,
-        CrowdSocial = 18
+        VisitTrainer = 6,
+        DrinkInTavern = 7,
+        WalkCityWalls = 8,
+        ReturnToInn = 9,
+        ReleaseCycle = 10,
+        RandomEmote = 11,
+        FishAtDocks = 12,
+        Idle = 13,
+        InnDance = 14,
+        PlazaSocial = 15,
+        CrowdSocial = 16
     };
 
     enum class CityPoiType : uint8
@@ -67,7 +63,6 @@ namespace CityLife
         WallPatrol = 6,
         Plaza = 7,
         Vendor = 8,
-        DuelRing = 9,
         InnBed = 10,
         Bank = 11
     };
@@ -133,7 +128,6 @@ namespace CityLife
         uint32 Priority = 100;
         bool UseTimeScaling = true;
         uint32 ResidenceSeconds = 0;
-        bool DuelHub = false;
         bool SocialHub = false;
         std::vector<Spot> Spots;
     };
@@ -146,18 +140,6 @@ namespace CityLife
         uint8 Level = 1;
         uint8 Race = 0;
         TeamSide Team = TeamSide::Any;
-    };
-
-    enum class DuelPairState : uint8
-    {
-        None = 0,
-        Rendezvous = 1,
-        Challenged = 2,
-        Countdown = 3,
-        InProgress = 4,
-        Active = 4,
-        Recovering = 5,
-        Closed = 6
     };
 
     struct ResidentMutationJournal
@@ -226,46 +208,12 @@ namespace CityLife
         int16 ChatDialogueId = -1;
         bool ChatInitiator = false;
 
-        // Paired Duel & Tactical Combat State
-        uint64 DuelPairId = 0;
-        uint64 CoreDuelArbiter = 0;
-        DuelPairState DuelState = DuelPairState::None;
-        uint32 DuelPartnerGuid = 0;
-        uint32 DuelStateMs = 0;
-        uint32 DuelCooldownUntilMs = 0;
-        bool DuelInitiator = false;
-        float DuelMeetX = 0.0f;
-        float DuelMeetY = 0.0f;
-        float DuelMeetZ = 0.0f;
-        bool DuelMeetingSet = false;
-        uint32 DuelRendezvousDeadlineMs = 0;
-        uint32 DuelLastRepositionMs = 0;
-
         // Alternating District Roam State
         bool LastRoamWasHub = false;
 
         // Tokenized Cooperation Lease & State Mutation Journal
         PlayerbotsLife::LeaseToken Token;
-        uint32 DuelStagingSlotId = 0;
         ResidentMutationJournal Journal;
-    };
-
-    struct DuelStep
-    {
-        uint32 HubId = 0;
-        uint64 Generation = 0;
-        uint64 PairId = 0;
-        PlayerbotsLife::LeaseToken ChallengerToken;
-        PlayerbotsLife::LeaseToken TargetToken;
-        uint32 ChallengerGuidLow = 0;
-        uint32 TargetGuidLow = 0;
-        std::string ChallengerName;
-        std::string TargetName;
-        uint32 ExecuteAt = 0;
-        uint8 RetryCount = 0;
-        bool TargetIsRealPlayer = false;
-        bool RequestSent = false;
-        uint32 RequestDeadline = 0;
     };
 }
 
