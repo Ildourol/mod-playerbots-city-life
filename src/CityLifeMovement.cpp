@@ -13,6 +13,7 @@
 #include "PathGenerator.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "Playerbots.h"
 #include "SpellAuraDefines.h"
 #include "SpellMgr.h"
 #include "StringFormat.h"
