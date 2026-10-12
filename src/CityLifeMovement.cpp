@@ -238,7 +238,7 @@ namespace CityLife
 
         void MoveToPosition(Player* bot, uint32 mapId, float x, float y, float z, float o, bool teleport)
         {
-            if (!bot || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(o))
+            if (!bot || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(o) || z <= -1000.0f)
                 return;
 
             if (teleport || bot->GetMapId() != mapId)
@@ -251,6 +251,17 @@ namespace CityLife
             }
             else
             {
+                if (bot->GetMap() && bot->GetMapId() == mapId)
+                {
+                    float probedZ = bot->GetMap()->GetHeight(bot->GetPhaseMask(), x, y, z);
+                    if (probedZ > -1000.0f && std::abs(probedZ - z) < 15.0f)
+                        z = probedZ;
+                }
+
+                // Prevent resetting MotionMaster if already actively moving towards destination
+                if (bot->isMoving() && bot->GetDistance2d(x, y) <= 2.5f)
+                    return;
+
                 bot->ClearUnitState(UNIT_STATE_CHASE | UNIT_STATE_FOLLOW);
                 bot->GetMotionMaster()->Clear();
                 bot->GetMotionMaster()->MovePoint(0, x, y, z);

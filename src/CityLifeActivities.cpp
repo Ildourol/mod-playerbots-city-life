@@ -726,7 +726,8 @@ namespace CityLife
 
             if (!Movement::IsAtSpot(bot, *spot, 4.0f))
             {
-                Movement::MoveToPosition(bot, hub.MapId, spot->X, spot->Y, spot->Z, spot->O, false);
+                if (!bot->isMoving())
+                    Movement::MoveToPosition(bot, hub.MapId, spot->X, spot->Y, spot->Z, spot->O, false);
             }
             else if (now >= resident.NextMoveAt)
             {

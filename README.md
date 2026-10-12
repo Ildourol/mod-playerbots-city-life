@@ -5,7 +5,7 @@
 Repository/module name: `mod-playerbots-city-life`  
 Created by **iCore**. Incorporates 100% of capabilities and micro-behaviors from `mod-city-bots`.
 
-City Life populates capitals, towns, and popular social hubs with configurable AzerothCore Playerbots. It makes cities feel lively, bustling, and immersive: residents wander between districts, shop at market stalls, socialize in taverns, fish along city waterways, and spar in duel rituals outside capital gates.
+City Life populates capitals, towns, and popular social hubs with configurable AzerothCore Playerbots. It makes cities feel lively, bustling, and immersive: residents wander between districts, shop at market stalls, socialize in taverns, visit class trainers, fish along city waterways, and patronize auction houses and banks.
 
 **Single Installed Module Requirement:** Users install only `mod-playerbots-city-life` alongside AzerothCore and `mod-playerbots`. `mod-city-bots` is completely unnecessary and should not be installed or enabled.
 
@@ -13,21 +13,20 @@ City Life populates capitals, towns, and popular social hubs with configurable A
 
 ## Key Features & Subsystems
 
-- **Living Urban Population:** Per-hub population settings across 16+ bundled cities and hubs (Stormwind, Orgrimmar, Ironforge, Undercity, Darnassus, Thunder Bluff, Exodar, Silvermoon, Shattrath, Dalaran, Gadgetzan, Goldshire, Honor Hold, Thrallmar, Wintergrasp camps).
-- **Multi-District Exploration:** Bots periodically explore alternating districts (e.g. Mage Quarter -> Trade District -> Old Town -> Cathedral Square) rather than staying fixed to one area.
-- **Capital Gate Duel Rituals:** Bots organize friendly duels outside Stormwind and Orgrimmar gates, calculating a fair midpoint rendezvous, planting duel flags, and fighting until victory/defeat.
-- **Tactical Combat Range-Keeping:** Duel participants respect tactical spacing—melee bots press close, while casters and hunters backpedal to keep optimal 15–25 yard engagement distance.
+- **Living Urban Population:** Per-hub population settings across 16+ bundled cities and hubs (Stormwind, Orgrimmar, Ironforge, Undercity, Darnassus, Thunder Bluff, Exodar, Silvermoon, Shattrath, Dalaran, Gadgetzan, Goldshire, Honor Hold, Thrallmar).
+- **Multi-District Exploration & Natural Pathing:** Bots explore alternating districts with smooth pathing, terrain-aware ground elevation verification, and natural waypoint dispersion to prevent overlapping and conga lines.
+- **Civic Activities & Services:** Dynamic civic routines including plaza socializing, tavern dining/drinking, visiting auctioneers, reading mailboxes, purchasing food from vendors, and training with class trainers.
+- **Class Trainer Navigation:** District and trainer matching ensures bots visit appropriate trainers (e.g. Mage Quarter for Mages, Valley of Honor for Warriors) with appropriate interaction emotes.
 - **Canal Water Avoidance:** Automated terrain and water-depth detection prevents bots from falling into Stormwind canals or drowning, automatically snapping waypoints to dry quays and stone bridges.
-- **Weighted Hotspot Distribution:** Dynamic distribution across functional categories: `auction`, `bank`, `mail`, `flight`, `square`, `tavern`, and `travel`. Auction house and bank spots receive boosted weighting with stationary patron ratios.
+- **Weighted Hotspot Distribution:** Dynamic distribution across functional categories: `auction`, `bank`, `mail`, `flight`, `square`, `tavern`, `trainer`, `dock`, and `travel`.
 - **Time-of-Day Dynamic Scaling:** Realistic morning, daytime, evening, and nighttime population curves with gradual arrivals and departures.
 - **Mutual Anti-Stealing Reservation Barrier:** Thread-safe, standalone-safe shared reservation registry (`PlayerbotsLife::ReservationRegistry`) ensuring bots reserved by City Life are never stolen or commanded by `mod-playerbots-pvp-life`, and vice versa.
 - **Conservative Population Borrowing Budget:** Strict default cap of 10% eligible pool / 120 bots max (configured for a 1,000-bot server) guarantees that ≥ 80% (800+ bots) of random playerbots remain completely free to roam, quest, run dungeons, and engage in open-world activities.
 - **Zero Bot Tampering Invariant:** Bots are borrowed strictly AS-IS from the natural Playerbot pool with zero artificial level modifications, zero talent changes, and zero stat inflation.
-- **Zero GM Spam Protection:** Game Masters and administrators are strictly exempt from unsolicited duel challenges, whispers, or broadcasts.
+- **Zero GM Spam Protection:** Game Masters and administrators are strictly exempt from unsolicited whispers or broadcasts.
 - **Silent-by-Default Operation:** All ambient speech, scripted dialogues, and greetings default to OFF (`0`) in config for a completely unobtrusive server experience out of the box.
 - **Instant Disengagement on Invite or Logout:** Residents immediately drop city behaviors if invited to a player group, commanded by an owner, or logged out.
-- **Shared Duel Staging Lattice (20yd Spacing):** Prevents duel ring overlap outside capital gates when running alongside `mod-playerbots-pvp-life`.
-- **Zero Feature Suppression Coexistence:** Fully compatible with `mod-playerbots-pvp-life`. Both modules can run simultaneously—including dueling outside capital gates—without disabling or yielding any features.
+- **Coexistence with `mod-playerbots-pvp-life`:** Capital gate dueling is unified under `mod-playerbots-pvp-life`, with both modules cooperating via shared reservation registry without contention.
 - **Comprehensive GM Commands:** Real-time runtime tools for tuning hubs, recording exact hotspot coordinates in-game, and monitoring system health.
 
 ---

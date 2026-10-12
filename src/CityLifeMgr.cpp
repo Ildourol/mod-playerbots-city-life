@@ -22,6 +22,7 @@
 #include "Group.h"
 #include "Log.h"
 #include "Map.h"
+#include "MapMgr.h"
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
@@ -1789,6 +1790,11 @@ namespace CityLife
     {
         float angle = frand(0.0f, TwoPi);
         float distance = spot.Radius > 0.0f ? frand(0.0f, spot.Radius) : 0.0f;
+        if (distance == 0.0f && spot.PoiType != CityPoiType::InnBed && spot.PoiType != CityPoiType::Tavern)
+        {
+            distance = frand(0.3f, 1.2f);
+        }
+
         resident.HubId = hub.Id;
         resident.SpotId = spot.Id;
         resident.TargetMap = hub.MapId;
@@ -1796,6 +1802,17 @@ namespace CityLife
         resident.TargetY = spot.Y + std::sin(angle) * distance;
         resident.TargetZ = spot.Z;
         resident.TargetO = spot.O;
+
+        if (distance > 0.0f)
+        {
+            Map* map = sMapMgr->FindBaseMap(hub.MapId);
+            if (map)
+            {
+                float probedZ = map->GetHeight(resident.TargetX, resident.TargetY, spot.Z);
+                if (probedZ > -1000.0f && std::abs(probedZ - spot.Z) < 15.0f)
+                    resident.TargetZ = probedZ;
+            }
+        }
 
         resident.Role = DetermineRole(hub, spot, resident.Bot);
         if (resident.Activity != CitizenActivity::ReleaseCycle)
