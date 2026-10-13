@@ -338,16 +338,21 @@ namespace CityLife
             if (bot->IsNonMeleeSpellCast(false))
                 return;
 
-            // Visual fishing loop: perform the native fishing animation without requiring
-            // learned fishing skill, spell learning, or modifying character inventory/equipment.
+            // Visual fishing loop: enforce fishing stance (EMOTE_STATE_FISHING) so the bot holds
+            // the fishing pole stance continuously, with occasional ONESHOT_FISHING cast animations.
             if (resident.NextEmoteAtMs <= now)
             {
-                if (roll_chance_i(30))
+                if (roll_chance_i(40))
+                {
                     bot->HandleEmoteCommand(EMOTE_ONESHOT_FISHING);
+                    // Schedule returning to sustained fishing stance shortly after casting motion
+                    resident.NextEmoteAtMs = now + urand(3, 5) * 1000;
+                }
                 else
+                {
                     bot->HandleEmoteCommand(EMOTE_STATE_FISHING);
-
-                resident.NextEmoteAtMs = now + urand(10, 20) * 1000;
+                    resident.NextEmoteAtMs = now + urand(12, 25) * 1000;
+                }
             }
         }
 

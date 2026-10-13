@@ -218,6 +218,7 @@ namespace CityLife
         _baselinePercent = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.BaselinePercent", 20), 0, 100);
         _burstGraceSeconds = sConfigMgr->GetOption<uint32>("CityLife.Population.BurstGraceSeconds", 180);
         _maxChangesPerTick = std::clamp<uint32>(sConfigMgr->GetOption<uint32>("CityLife.Population.MaxChangesPerTick", 3), 1, 50);
+        _realPlayerScale = std::clamp<float>(sConfigMgr->GetOption<float>("CityLife.Population.RealPlayerPresenceScale", 1.0f), 0.1f, 10.0f);
 
         // Compatibility & Anti-Stealing Barrier
         _compatPvPLifeHarmony = sConfigMgr->GetOption<bool>("CityLife.Compatibility.PvPLife.EnableHarmony", true);
@@ -243,9 +244,9 @@ namespace CityLife
 
         // Relocation & Movement
         _roaming = sConfigMgr->GetOption<bool>("CityLife.Behaviour.Relocate", true);
-        _relocateMinSeconds = std::max<uint32>(30, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.RelocateMinSeconds", 60));
-        _relocateMaxSeconds = std::max(_relocateMinSeconds, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.RelocateMaxSeconds", 180));
-        _leashRadius = std::max<uint32>(10, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.LeashRadius", 35));
+        _relocateMinSeconds = std::max<uint32>(30, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.RelocateMinSeconds", 180));
+        _relocateMaxSeconds = std::max(_relocateMinSeconds, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.RelocateMaxSeconds", 480));
+        _leashRadius = std::max<uint32>(10, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.LeashRadius", 75));
         _emotes = sConfigMgr->GetOption<bool>("CityLife.Behaviour.Emotes", true);
         _emoteChance = std::min<uint32>(100, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.EmoteChancePct", 35));
         _emoteMinSeconds = std::max<uint32>(30, sConfigMgr->GetOption<uint32>("CityLife.Behaviour.EmoteMinSeconds", 120));
@@ -298,8 +299,15 @@ namespace CityLife
 
         // Movement & Sink Protection
         _mountBetweenPoiChance = std::min<uint32>(100, sConfigMgr->GetOption<uint32>("CityLife.Movement.MountBetweenPoiChance", 90));
+        _walkingStrategyChance = std::min<uint32>(100, sConfigMgr->GetOption<uint32>("CityLife.Movement.WalkingChancePct", 5));
         _sinkForensics = sConfigMgr->GetOption<bool>("CityLife.Movement.SinkForensics", true);
         _maxPathRefuseStreak = sConfigMgr->GetOption<uint32>("CityLife.Movement.MaxPathRefuseStreak", 3);
+
+        // Fishing Activity Settings
+        _fishingDurationMinSec = std::max<uint32>(15, sConfigMgr->GetOption<uint32>("CityLife.Activities.Fishing.DurationMinSec", 60));
+        _fishingDurationMaxSec = std::max(_fishingDurationMinSec, sConfigMgr->GetOption<uint32>("CityLife.Activities.Fishing.DurationMaxSec", 180));
+        _fishingRestMinSec = std::max<uint32>(10, sConfigMgr->GetOption<uint32>("CityLife.Activities.Fishing.RestMinSec", 30));
+        _fishingRestMaxSec = std::max(_fishingRestMinSec, sConfigMgr->GetOption<uint32>("CityLife.Activities.Fishing.RestMaxSec", 90));
 
         // Chat & Interactions
         _chatScriptedConversations = sConfigMgr->GetOption<bool>("CityLife.Chat.ScriptedConversations", true);
@@ -1491,6 +1499,18 @@ namespace CityLife
             if (spot.Id == ignoredSpotId)
                 continue;
 
+            if (activity == CitizenActivity::WanderDistrict)
+            {
+                // Roaming path covers broader open areas across city districts
+                if (spot.PoiType == CityPoiType::Plaza || spot.PoiType == CityPoiType::WallPatrol ||
+                    spot.Category == "fountain" || spot.Category == "square" || spot.Category == "park" ||
+                    spot.Category == "monument" || spot.Category == "plaza")
+                {
+                    matchingSpots.push_back(&spot);
+                    continue;
+                }
+            }
+
             if (spot.PoiType == targetType || (targetType == CityPoiType::Tavern && spot.PoiType == CityPoiType::Inn))
                 matchingSpots.push_back(&spot);
         }
@@ -1618,7 +1638,11 @@ namespace CityLife
         }
 
         if (playerPresent)
+        {
+            if (_realPlayerScale != 1.0f)
+                return static_cast<uint32>(std::lround(nominal * _realPlayerScale));
             return nominal;
+        }
 
         // When unoccupied:
         if (_demandMode == DemandMode::Dynamic)
@@ -1829,7 +1853,8 @@ namespace CityLife
         resident.Stationary = isDedicatedPerformer || (allowStationary && IsStaticServiceSpot(hub, spot) &&
             urand(1, 100) <= _staticServiceChance);
         resident.ActivityStartMs = GameTimeMS();
-        resident.ActivityDurationMs = urand(45, 180) * 1000;
+        resident.ActivityDurationMs = (resident.Activity == CitizenActivity::FishAtDocks) ?
+            (urand(_fishingDurationMinSec, _fishingDurationMaxSec) * 1000) : (urand(45, 180) * 1000);
         resident.LastRoamWasHub = IsHubDistrict(hub.Name, spot.District);
     }
 
@@ -2246,18 +2271,32 @@ namespace CityLife
         resident.Activity = nextActivity;
         resident.NextMoveAt = GameTimeSeconds() + urand(_relocateMinSeconds, _relocateMaxSeconds);
         resident.ActivityStartMs = GameTimeMS();
-        resident.ActivityDurationMs = urand(45, 180) * 1000;
+        resident.ActivityDurationMs = (nextActivity == CitizenActivity::WanderDistrict) ?
+            (urand(90, 240) * 1000) : (urand(45, 180) * 1000);
 
         SetStayPosition(player, resident);
 
-        // Mounting decision for outdoor distance
+        // Walk vs Run / Mount decision
         float distance = player->GetDistance2d(resident.TargetX, resident.TargetY);
-        if (_actMountedTravel && distance > 30.0f && urand(1, 100) <= _mountBetweenPoiChance)
+        bool walk = false;
+        if (!player->IsMounted() && _walkingStrategyChance > 0 && roll_chance_i(_walkingStrategyChance))
         {
-            Movement::TryMount(player);
+            walk = true;
+            if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+                ai->ChangeStrategy("+walk", BOT_STATE_NON_COMBAT);
+        }
+        else
+        {
+            if (PlayerbotAI* ai = GET_PLAYERBOT_AI(player))
+                ai->ChangeStrategy("-walk", BOT_STATE_NON_COMBAT);
+
+            if (_actMountedTravel && distance > 30.0f && urand(1, 100) <= _mountBetweenPoiChance)
+            {
+                Movement::TryMount(player);
+            }
         }
 
-        Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, false);
+        Movement::MoveToPosition(player, hub.MapId, resident.TargetX, resident.TargetY, resident.TargetZ, resident.TargetO, false, walk);
     }
 
     void Manager::MaintainResidents()
@@ -2406,15 +2445,16 @@ namespace CityLife
                             player->SetStandState(UNIT_STAND_STATE_SIT);
                             resident.Sitting = true;
                             resident.ActivityStartMs = nowMs;
-                            resident.ActivityDurationMs = urand(45, 120) * 1000;
+                            resident.ActivityDurationMs = urand(_fishingRestMinSec, _fishingRestMaxSec) * 1000;
                         }
                         else
                         {
-                            // Resting completed: stand up and resume fishing
+                            // Resting completed: stand up, reset fishing emote timer, and resume fishing
                             player->SetStandState(UNIT_STAND_STATE_STAND);
                             resident.Sitting = false;
+                            resident.NextEmoteAtMs = nowMs;
                             resident.ActivityStartMs = nowMs;
-                            resident.ActivityDurationMs = urand(60, 180) * 1000;
+                            resident.ActivityDurationMs = urand(_fishingDurationMinSec, _fishingDurationMaxSec) * 1000;
                         }
                     }
                     else if (resident.Activity == CitizenActivity::SitInTavern || resident.Activity == CitizenActivity::DrinkInTavern)

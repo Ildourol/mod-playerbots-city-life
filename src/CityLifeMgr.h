@@ -154,6 +154,7 @@ namespace CityLife
         uint32 _baselinePercent = 20;
         uint32 _burstGraceSeconds = 180;
         uint32 _maxChangesPerTick = 3;
+        float _realPlayerScale = 1.0f;
 
         // Compatibility & Anti-Stealing Barrier
         bool _compatPvPLifeHarmony = true;
@@ -179,8 +180,8 @@ namespace CityLife
         // Behavior & Relocation
         bool _roaming = true;
         uint32 _relocateMinSeconds = 180;
-        uint32 _relocateMaxSeconds = 600;
-        uint32 _leashRadius = 35;
+        uint32 _relocateMaxSeconds = 480;
+        uint32 _leashRadius = 75;
         bool _emotes = true;
         uint32 _emoteChance = 35;
         uint32 _emoteMinSeconds = 120;
@@ -219,8 +220,15 @@ namespace CityLife
 
         // Movement & Sink Settings
         uint32 _mountBetweenPoiChance = 90;
+        uint32 _walkingStrategyChance = 5;
         bool _sinkForensics = true;
         uint32 _maxPathRefuseStreak = 3;
+
+        // Fishing Activity Settings
+        uint32 _fishingDurationMinSec = 60;
+        uint32 _fishingDurationMaxSec = 180;
+        uint32 _fishingRestMinSec = 30;
+        uint32 _fishingRestMaxSec = 90;
 
         // Chat & Interaction Settings
         bool _chatScriptedConversations = true;

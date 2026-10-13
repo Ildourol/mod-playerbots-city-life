@@ -59,6 +59,12 @@ CityLife.Population.BaselinePercent = 20
 # Grace period (in seconds) before scaling down a hub after the last real player leaves.
 CityLife.Population.BurstGraceSeconds = 180
 
+# Real Player Presence Population Scale:
+# Multiplier applied to the hub's borrowed bot population when a real human player is present in the area.
+# For example, 1.0 = standard nominal allocation (1x), 2.0 = double the amount of citizen bots (2x).
+# Default: 1.0 (No scaling change; set higher e.g. 1.5, 2.0 to dynamically pack areas with bots when players visit)
+CityLife.Population.RealPlayerPresenceScale = 1.0
+
 # Maximum number of bot borrows or releases executed per tick to prevent CPU spikes.
 CityLife.Population.MaxChangesPerTick = 3
 
@@ -123,8 +129,8 @@ CityLife.Time.NightMultiplierPct = 25
 
 # Resident bots occasionally move between auction houses, banks, mailboxes, and public squares.
 CityLife.Behaviour.Relocate = 1
-CityLife.Behaviour.RelocateMinSeconds = 60
-CityLife.Behaviour.RelocateMaxSeconds = 180
+CityLife.Behaviour.RelocateMinSeconds = 180
+CityLife.Behaviour.RelocateMaxSeconds = 480
 
 # Alternating District Visits:
 # When enabled, bots in major capitals (Stormwind, Orgrimmar, Ironforge, etc.) oscillate
@@ -133,7 +139,7 @@ CityLife.Behaviour.RelocateMaxSeconds = 180
 CityLife.AlternatingDistricts.Enable = 1
 
 # Leash radius (in yards). Bots displaced further are returned to their assigned location.
-CityLife.Behaviour.LeashRadius = 35
+CityLife.Behaviour.LeashRadius = 75
 
 CityLife.Behaviour.Emotes = 1
 CityLife.Behaviour.EmoteChancePct = 35
@@ -215,11 +221,23 @@ CityLife.Movement.WaterAvoidance.Enable = 1
 # Chance for bots to mount when traveling long outdoor legs (>30 yards).
 CityLife.Movement.MountBetweenPoiChance = 90
 
+# Small probability (in percentage, 0-100) that bots will walk instead of running when navigating between spots.
+# Set to a very small chance (e.g. 5%) to create natural, casual pedestrian pacing.
+CityLife.Movement.WalkingChancePct = 5
+
 # Enable sink forensics logging when a bot descends rapidly through floors.
 CityLife.Movement.SinkForensics = 1
 
 # Maximum consecutive path rejections before triggering safe anchor recovery.
 CityLife.Movement.MaxPathRefuseStreak = 3
+
+# Fishing Activity Duration & Rest Cooldown (in seconds)
+# Active fishing duration before resting at the dock:
+CityLife.Activities.Fishing.DurationMinSec = 60
+CityLife.Activities.Fishing.DurationMaxSec = 180
+# Rest/sitting cooldown between fishing sessions:
+CityLife.Activities.Fishing.RestMinSec = 30
+CityLife.Activities.Fishing.RestMaxSec = 90
 
 ###################################################################################################
 # Chat, Economy & Interaction Safeguards

@@ -22,7 +22,7 @@ namespace CityLife
         void DismountIfMounted(Player* bot);
         bool CanMountHere(Player* bot);
         bool TryMount(Player* bot);
-        void MoveToPosition(Player* bot, uint32 mapId, float x, float y, float z, float o, bool teleport);
+        void MoveToPosition(Player* bot, uint32 mapId, float x, float y, float z, float o, bool teleport, bool forceWalk = false);
         bool IsAtSpot(Player* bot, Spot const& spot, float tolerance = 3.5f);
         bool IsAtCoordinates(Player* bot, uint32 mapId, float x, float y, float tolerance = 3.5f);
         bool PathTouchesWater(Player* bot, PathGenerator const& path);
