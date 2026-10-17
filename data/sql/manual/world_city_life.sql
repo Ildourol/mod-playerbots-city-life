@@ -146,7 +146,7 @@ INNER JOIN
 
   UNION ALL SELECT 'Thrallmar','MainSquare','square',156.251,2673.45,85.1587,0.382074,8,130
   UNION ALL SELECT 'Thrallmar','Mailbox','mail',172.726,2623.06,86.8361,3.56983,5,115
-  UNION ALL SELECT 'Thrallmar','FlightMaster','flight',233.137,2632.3,88.3007,2.67035,5,85,
+  UNION ALL SELECT 'Thrallmar','FlightMaster','flight',233.137,2632.3,88.3007,2.67035,5,85
 
   -- Capital civic spots: Class Trainers, Docks, Taverns
   UNION ALL SELECT 'Stormwind','TrainerOldTown','trainer',-8705.0,812.0,97.0,0.0,5,80
