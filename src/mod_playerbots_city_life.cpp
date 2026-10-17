@@ -184,7 +184,7 @@ public:
         for (GroupReference const* ref = group->GetFirstMember(); ref != nullptr; ref = ref->next())
         {
             Player const* member = ref->GetSource();
-            if (member && member->GetSession() && !member->GetSession()->IsBot())
+            if (member && member->GetSession() && !member->GetSession()->IsHeadless())
             {
                 hasRealPlayer = true;
                 break;

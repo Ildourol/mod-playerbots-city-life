@@ -1655,7 +1655,7 @@ namespace CityLife
 
     void Manager::OnPlayerZoneUpdate(Player* player, uint32 zoneId)
     {
-        if (!player || !player->GetSession() || player->GetSession()->IsBot())
+        if (!player || !player->GetSession() || player->GetSession()->IsHeadless())
             return;
 
         std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
@@ -1670,7 +1670,7 @@ namespace CityLife
 
     void Manager::OnPlayerLogin(Player* player)
     {
-        if (!player || !player->GetSession() || player->GetSession()->IsBot())
+        if (!player || !player->GetSession() || player->GetSession()->IsHeadless())
             return;
 
         std::lock_guard<std::mutex> lock(_hubRealPlayerMutex);
@@ -1685,7 +1685,7 @@ namespace CityLife
 
     void Manager::OnPlayerLogout(Player* player)
     {
-        if (player && player->GetSession() && player->GetSession()->IsBot())
+        if (player && player->GetSession() && player->GetSession()->IsHeadless())
         {
             uint32 guid = player->GetGUID().GetCounter();
             if (IsResident(guid))

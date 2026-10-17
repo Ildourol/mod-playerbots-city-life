@@ -429,7 +429,7 @@ namespace CityLife
                 (void)guid;
                 if (!player || player == bot || !player->IsInWorld())
                     continue;
-                if (!player->GetSession() || !player->GetSession()->IsBot())
+                if (!player->GetSession() || !player->GetSession()->IsHeadless())
                     continue;
                 if (player->GetMapId() != bot->GetMapId())
                     continue;
